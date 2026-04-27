@@ -1,8 +1,11 @@
 import { Router } from 'express'
 import { db, cryptoId, rowToCase, caseToRow, writeAudit } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, requireCaseAccess } from '../auth.js'
 
 const r = Router()
+
+// 整个 /api/cases 命名空间都需要案件查看权限（admin 或 can_view_cases=true）
+r.use(requireAuth, requireCaseAccess)
 
 // ─── Validation ────────────────────────────────────────────────────────────────
 

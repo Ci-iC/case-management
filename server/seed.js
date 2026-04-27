@@ -22,6 +22,7 @@ async function seedAdmin() {
     password_hash: hash,
     role: 'admin',
     display_name: displayName,
+    can_view_cases: true,
     created_at: new Date(),
     created_by: 'system',
   })

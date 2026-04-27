@@ -30,7 +30,7 @@ export async function requireAuth(req, res, next) {
     if (!payload) return res.status(401).json({ error: '登录已过期，请重新登录' })
 
     const user = await db('users')
-      .select('id', 'username', 'role', 'display_name', 'created_at')
+      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'created_at')
       .where({ id: payload.sub })
       .first()
     if (!user) return res.status(401).json({ error: '用户不存在' })
@@ -40,6 +40,7 @@ export async function requireAuth(req, res, next) {
       username: user.username,
       role: user.role,
       displayName: user.display_name,
+      canViewCases: !!user.can_view_cases,
       createdAt: user.created_at instanceof Date ? user.created_at.toISOString() : user.created_at,
     }
     next()
@@ -52,4 +53,10 @@ export async function requireAuth(req, res, next) {
 export function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: '需要管理员权限' })
   next()
+}
+
+/** admin 自动通过；其他用户看 can_view_cases。 */
+export function requireCaseAccess(req, res, next) {
+  if (req.user?.role === 'admin' || req.user?.canViewCases) return next()
+  return res.status(403).json({ error: '无案件管理权限' })
 }
