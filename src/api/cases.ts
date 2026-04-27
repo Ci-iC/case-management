@@ -6,7 +6,7 @@ export const casesApi = {
     return apiFetch<{ cases: CaseRecord[] }>('/api/cases')
   },
 
-  create(data: Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'isArchived'>) {
+  create(data: Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'version' | 'isArchived'>) {
     return apiFetch<{ case: CaseRecord }>('/api/cases', {
       method: 'POST',
       body: JSON.stringify(data),

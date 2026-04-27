@@ -13,9 +13,11 @@ export function setUnauthorizedHandler(fn: () => void) {
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  body: unknown          // raw JSON body from server (e.g. { error, current } on 409)
+  constructor(message: string, status: number, body?: unknown) {
     super(message)
     this.status = status
+    this.body = body
   }
 }
 
@@ -38,11 +40,12 @@ export async function apiFetch<T = unknown>(
 
   if (!resp.ok) {
     let msg = `请求失败 (${resp.status})`
+    let body: unknown = undefined
     try {
-      const body = await resp.json()
-      msg = body?.error || msg
+      body = await resp.json()
+      msg = (body as { error?: string })?.error || msg
     } catch { /* ignore */ }
-    throw new ApiError(msg, resp.status)
+    throw new ApiError(msg, resp.status, body)
   }
 
   // 204 or empty body

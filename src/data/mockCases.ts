@@ -4,7 +4,7 @@ export const MOCK_CASES: CaseRecord[] = [
   // 初始数据为空，请通过界面「导入」功能加载案件数据
 ]
 
-const _UNUSED: CaseRecord[] = [
+const _UNUSED: Partial<CaseRecord>[] = [
   {
     id: 'c-001',
     caseNumber: 'SH2025-001',

@@ -1,13 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Save } from 'lucide-react'
 import { useCaseStore, useCaseById } from '@/store/useCaseStore'
 import { Drawer } from '@/components/ui/Drawer'
 import { Button } from '@/components/ui/Button'
 import { DISPUTE_TYPE_OPTIONS, CASE_STAGE_OPTIONS, CLOSING_METHOD_OPTIONS } from '@/constants'
+import { ApiError } from '@/api/client'
+import { ConflictDialog } from './ConflictDialog'
 import type { CaseRecord, DisputeType, CaseStage } from '@/types'
 
-type FormValues = Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'isArchived'>
+type FormValues = Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'version' | 'isArchived'>
 
 const EMPTY_FORM: FormValues = {
   caseNumber: '',
@@ -55,11 +57,15 @@ export function CaseFormDrawer() {
   const stage = watch('stage')
   const requireClosingMethod = stage === 'execution' || stage === 'closed'
 
+  // 冲突对话框状态：mine 是用户提交的内容，current 是服务端最新版
+  const [conflict, setConflict] = useState<{ mine: FormValues; current: CaseRecord } | null>(null)
+  const [forceLoading, setForceLoading] = useState(false)
+
   // Populate form when editing / prefilling / creating fresh
   useEffect(() => {
     if (!isFormOpen) return
     if (existingCase) {
-      reset(existingCase)
+      reset(existingCase as unknown as FormValues)
     } else if (pendingSmartCase) {
       reset({ ...EMPTY_FORM, ...pendingSmartCase } as FormValues)
     } else {
@@ -75,19 +81,54 @@ export function CaseFormDrawer() {
 
     try {
       if (isEditing && editingCaseId) {
-        await updateCase(editingCaseId, clean)
+        if (!existingCase) throw new Error('找不到要编辑的案件')
+        await updateCase(editingCaseId, { ...clean, version: existingCase.version })
       } else {
         await addCase(clean)
       }
       closeForm()
     } catch (e) {
+      // 乐观锁冲突：弹冲突对话框，让用户决定
+      if (e instanceof ApiError && e.status === 409 && (e.body as { current?: CaseRecord })?.current) {
+        const current = (e.body as { current: CaseRecord }).current
+        setConflict({ mine: clean, current })
+        return
+      }
       window.alert(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // 放弃我的修改：用服务端最新版重置表单，关闭冲突对话框
+  function handleDiscardMine() {
+    if (conflict) reset(conflict.current as unknown as FormValues)
+    setConflict(null)
+  }
+
+  // 用我的覆盖：拿服务端 version 重发提交
+  async function handleForceOverwrite() {
+    if (!conflict || !editingCaseId) return
+    setForceLoading(true)
+    try {
+      await updateCase(editingCaseId, { ...conflict.mine, version: conflict.current.version })
+      setConflict(null)
+      closeForm()
+    } catch (e) {
+      // 期间又被改：刷新 current，留在对话框
+      if (e instanceof ApiError && e.status === 409 && (e.body as { current?: CaseRecord })?.current) {
+        const current = (e.body as { current: CaseRecord }).current
+        setConflict({ mine: conflict.mine, current })
+      } else {
+        window.alert(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+      }
+    } finally {
+      setForceLoading(false)
     }
   }
 
   const R = register  // shorthand
 
   return (
+    <>
     <Drawer
       open={isFormOpen}
       onClose={closeForm}
@@ -376,6 +417,17 @@ export function CaseFormDrawer() {
         </FormSection>
       </form>
     </Drawer>
+
+    <ConflictDialog
+      open={!!conflict}
+      mine={conflict?.mine ?? null}
+      current={conflict?.current ?? null}
+      onClose={() => setConflict(null)}
+      onDiscardMine={handleDiscardMine}
+      onForceOverwrite={handleForceOverwrite}
+      loading={forceLoading}
+    />
+    </>
   )
 }
 

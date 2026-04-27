@@ -73,6 +73,8 @@ export interface CaseRecord {
   createdAt: string
   updatedAt: string
   createdBy: string
+  updatedBy?: string
+  version: number             // 乐观锁版本号
   isArchived: boolean
 }
 

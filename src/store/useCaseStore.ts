@@ -32,7 +32,7 @@ interface CaseState {
 
   // Data actions (all async, hit server)
   loadCases: () => Promise<void>
-  addCase: (data: Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'isArchived'>) => Promise<CaseRecord>
+  addCase: (data: Omit<CaseRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'version' | 'isArchived'>) => Promise<CaseRecord>
   updateCase: (id: string, data: Partial<CaseRecord>) => Promise<CaseRecord>
   deleteCase: (id: string) => Promise<void>
   archiveCase: (id: string) => Promise<void>
@@ -98,6 +98,7 @@ export const useCaseStore = create<CaseState>()((set, get) => ({
   },
 
   async updateCase(id, data) {
+    // 调用方必须传 version；档/归档等内部调用会自动带上
     const { case: updated } = await casesApi.update(id, data)
     set((s) => ({ cases: s.cases.map((c) => (c.id === id ? updated : c)) }))
     get()._recompute()
@@ -113,12 +114,32 @@ export const useCaseStore = create<CaseState>()((set, get) => ({
   },
 
   async archiveCase(id) {
-    await get().updateCase(id, { isArchived: true })
-    if (get().selectedCaseId === id) set({ isDetailOpen: false })
+    const c = get().cases.find((x) => x.id === id)
+    if (!c) return
+    try {
+      await get().updateCase(id, { isArchived: true, version: c.version })
+      if (get().selectedCaseId === id) set({ isDetailOpen: false })
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        await get().loadCases()
+        throw new ApiError('该案件已被他人修改，已为你刷新最新数据', 409, e.body)
+      }
+      throw e
+    }
   },
 
   async unarchiveCase(id) {
-    await get().updateCase(id, { isArchived: false })
+    const c = get().cases.find((x) => x.id === id)
+    if (!c) return
+    try {
+      await get().updateCase(id, { isArchived: false, version: c.version })
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        await get().loadCases()
+        throw new ApiError('该案件已被他人修改，已为你刷新最新数据', 409, e.body)
+      }
+      throw e
+    }
   },
 
   async importCases(incoming, mode) {
