@@ -1,6 +1,5 @@
 import { Component, type ReactNode } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
-import CasesPage from '@/pages/CasesPage'
 import { AuthGate } from '@/components/auth/AuthGate'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -34,9 +33,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthGate>
-        <AppLayout>
-          <CasesPage />
-        </AppLayout>
+        <AppLayout />
       </AuthGate>
     </ErrorBoundary>
   )

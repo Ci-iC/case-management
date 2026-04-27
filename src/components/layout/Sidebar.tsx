@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users } from 'lucide-react'
+import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users, FileSearch } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { NAV_ITEMS } from '@/constants'
 import { useAuthStore } from '@/store/useAuthStore'
 import { UsersAdminModal } from '@/components/admin/UsersAdminModal'
+import { SystemSettingsModal } from '@/components/admin/SystemSettingsModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
-  Briefcase, Calendar, BarChart2, Settings,
+  Briefcase, Calendar, BarChart2, Settings, FileSearch,
 }
 
 interface SidebarProps {
@@ -18,10 +19,15 @@ interface SidebarProps {
 export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
   const { user, logout } = useAuthStore()
   const [usersOpen, setUsersOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const isAdmin = user?.role === 'admin'
+  const canViewCases = !!user?.canViewCases || isAdmin
   const displayLabel = user?.displayName || user?.username || '未登录'
   const initial = (user?.displayName?.[0] || user?.username?.[0] || 'U').toUpperCase()
+
+  // 隐藏没权限的菜单
+  const visibleItems = NAV_ITEMS.filter((it) => !('requiresCaseAccess' in it && it.requiresCaseAccess) || canViewCases)
 
   return (
     <>
@@ -38,29 +44,30 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
         </div>
 
         {/* Nav Items */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5">
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
             工作台
           </p>
 
-          {NAV_ITEMS.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = ICON_MAP[item.icon]
             const isActive = activeNav === item.id
+            const soon = 'soon' in item && item.soon
             return (
               <button
                 key={item.id}
-                onClick={() => !item.soon && onNavChange(item.id)}
+                onClick={() => !soon && onNavChange(item.id)}
                 className={cn(
                   'w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
                   isActive
                     ? 'bg-primary-50 text-primary-700'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
-                  item.soon && 'cursor-default opacity-50',
+                  soon && 'cursor-default opacity-50',
                 )}
               >
                 <Icon size={16} className={isActive ? 'text-primary-600' : 'text-slate-400'} />
                 <span className="flex-1 text-left">{item.label}</span>
-                {item.soon && (
+                {soon && (
                   <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">
                     即将上线
                   </span>
@@ -80,6 +87,13 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
               >
                 <Users size={16} className="text-slate-400" />
                 <span className="flex-1 text-left">用户管理</span>
+              </button>
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+              >
+                <Settings size={16} className="text-slate-400" />
+                <span className="flex-1 text-left">系统设置</span>
               </button>
             </>
           )}
@@ -114,6 +128,7 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
       </aside>
 
       <UsersAdminModal open={usersOpen} onClose={() => setUsersOpen(false)} />
+      <SystemSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   )
 }

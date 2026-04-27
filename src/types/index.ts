@@ -165,3 +165,66 @@ export interface CaseComment {
   createdAt: string
   updatedAt: string
 }
+
+// ─── M4: AI 审核 ──────────────────────────────────────────────────────────────
+
+export interface ReviewRecord {
+  id: string
+  caseId: string | null
+  uploadedFilename: string
+  uploadedSizeBytes: number | null
+  uploadedMimeType: string | null
+  reviewText: string
+  model: string | null
+  createdBy: string
+  createdByUsername?: string
+  createdByDisplayName?: string
+  createdAt: string
+}
+
+// ─── M4: 站内消息 ─────────────────────────────────────────────────────────────
+
+export interface MessageAttachment {
+  id: string
+  filename: string
+  sizeBytes: number | null
+  mimeType: string | null
+  createdAt: string
+}
+
+export interface MessageRecord {
+  id: string
+  senderId: string
+  senderUsername?: string
+  senderDisplayName?: string
+  receiverId: string
+  receiverUsername?: string
+  receiverDisplayName?: string
+  body: string
+  caseId: string | null
+  caseNumber?: string
+  caseName?: string
+  reviewId: string | null
+  isRead: boolean
+  readAt?: string | null
+  createdAt: string
+  attachmentCount: number
+  // 详情时附带
+  attachments?: MessageAttachment[]
+  review?: {
+    id: string
+    uploadedFilename: string
+    reviewText: string
+    model: string | null
+    createdAt: string
+  } | null
+}
+
+// ─── M4: 通讯录 ───────────────────────────────────────────────────────────────
+
+export interface Contact {
+  id: string
+  username: string
+  displayName?: string | null
+  role: 'admin' | 'user'
+}

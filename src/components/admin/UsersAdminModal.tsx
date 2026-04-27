@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, User as UserIcon } from 'lucide-react'
+import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, User as UserIcon, Briefcase } from 'lucide-react'
 import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { usersApi } from '@/api/users'
@@ -26,6 +26,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
   const [newPassword, setNewPassword] = useState('')
   const [newDisplayName, setNewDisplayName] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'user'>('user')
+  const [newCanViewCases, setNewCanViewCases] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null)
   const [resetTarget, setResetTarget] = useState<AuthUser | null>(null)
@@ -59,6 +60,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
     setNewPassword('')
     setNewDisplayName('')
     setNewRole('user')
+    setNewCanViewCases(false)
   }
 
   async function handleCreate() {
@@ -73,11 +75,24 @@ export function UsersAdminModal({ open, onClose }: Props) {
         password: newPassword,
         role: newRole,
         displayName: newDisplayName.trim() || undefined,
+        canViewCases: newRole === 'admin' ? true : newCanViewCases,
       })
       resetCreateForm()
       setShowCreate(false)
       setFlash(`已创建账号「${newUsername.trim()}」`)
       refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function toggleCaseAccess(u: AuthUser) {
+    if (u.role === 'admin') return  // admin 不能关
+    const next = !u.canViewCases
+    try {
+      await usersApi.setCaseAccess(u.id, next)
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, canViewCases: next } : x))
+      setFlash(next ? `已开放「${u.username}」的案件管理权限` : `已关闭「${u.username}」的案件管理权限`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -188,6 +203,17 @@ export function UsersAdminModal({ open, onClose }: Props) {
                   </select>
                 </div>
               </div>
+              {newRole !== 'admin' && (
+                <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300"
+                    checked={newCanViewCases}
+                    onChange={(e) => setNewCanViewCases(e.target.checked)}
+                  />
+                  <span>开放案件管理权限（勾选后该用户可看全部案件，不勾选只能用合同审核）</span>
+                </label>
+              )}
               <div className="flex justify-end gap-2 pt-1">
                 <Button
                   variant="secondary"
@@ -233,6 +259,27 @@ export function UsersAdminModal({ open, onClose }: Props) {
                         {u.role === 'admin' ? '管理员' : '普通用户'} · 创建于 {formatDate(u.createdAt)}
                       </p>
                     </div>
+                    <button
+                      className={cn(
+                        'p-1.5 rounded transition-colors',
+                        u.role === 'admin'
+                          ? 'text-amber-500 cursor-default'
+                          : u.canViewCases
+                            ? 'text-emerald-600 hover:bg-emerald-50'
+                            : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100',
+                      )}
+                      onClick={() => toggleCaseAccess(u)}
+                      title={
+                        u.role === 'admin'
+                          ? '管理员默认有案件权限'
+                          : u.canViewCases
+                            ? '点击关闭案件管理权限'
+                            : '点击开放案件管理权限'
+                      }
+                      disabled={u.role === 'admin'}
+                    >
+                      <Briefcase size={14} />
+                    </button>
                     <button
                       className="p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                       onClick={() => { setResetTarget(u); setResetPw('') }}

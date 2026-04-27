@@ -1,20 +1,43 @@
 import { useState } from 'react'
 import { Sidebar } from './Sidebar'
+import { TopBar } from './TopBar'
+import { useAuthStore } from '@/store/useAuthStore'
+import CasesPage from '@/pages/CasesPage'
+import ContractReviewPage from '@/pages/ContractReviewPage'
+import MessagesPage from '@/pages/MessagesPage'
 
-interface AppLayoutProps {
-  children: React.ReactNode
-}
+export default function AppLayout() {
+  const user = useAuthStore(s => s.user)
+  const isAdmin = user?.role === 'admin'
+  const canViewCases = isAdmin || !!user?.canViewCases
 
-export default function AppLayout({ children }: AppLayoutProps) {
-  const [activeNav, setActiveNav] = useState('cases')
+  // 默认导航：有案件权限 → cases；否则 → reviews
+  const [activeNav, setActiveNav] = useState<string>(canViewCases ? 'cases' : 'reviews')
+  const [messagesOpen, setMessagesOpen] = useState(false)
+
+  function showPage() {
+    if (messagesOpen) return <MessagesPage />
+    switch (activeNav) {
+      case 'cases': return canViewCases ? <CasesPage /> : <ContractReviewPage />
+      case 'reviews': return <ContractReviewPage />
+      default: return <ContractReviewPage />
+    }
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-50">
-      <Sidebar activeNav={activeNav} onNavChange={setActiveNav} />
+      <Sidebar
+        activeNav={messagesOpen ? '' : activeNav}
+        onNavChange={(id) => { setMessagesOpen(false); setActiveNav(id) }}
+      />
 
-      {/* Main content */}
+      {/* Main */}
       <main className="flex flex-1 flex-col overflow-hidden">
-        {children}
+        <TopBar
+          active={messagesOpen}
+          onClick={() => setMessagesOpen(!messagesOpen)}
+        />
+        {showPage()}
       </main>
     </div>
   )

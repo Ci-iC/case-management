@@ -5,6 +5,7 @@ export interface AuthUser {
   username: string
   role: 'admin' | 'user'
   displayName?: string
+  canViewCases?: boolean
   createdAt: string
   createdBy?: string
 }

@@ -122,8 +122,8 @@ export const DEFAULT_FILTERS = {
 // ─── Navigation Items (for Sidebar) ───────────────────────────────────────────
 
 export const NAV_ITEMS = [
-  { id: 'cases',    label: '案件台账', icon: 'Briefcase',   path: '/' },
+  { id: 'reviews',  label: '合同审核', icon: 'FileSearch',  path: '/reviews' },
+  { id: 'cases',    label: '案件台账', icon: 'Briefcase',   path: '/',        requiresCaseAccess: true },
   { id: 'calendar', label: '节点日历', icon: 'Calendar',    path: '/calendar',  soon: true },
   { id: 'stats',    label: '数据统计', icon: 'BarChart2',   path: '/stats',     soon: true },
-  { id: 'settings', label: '系统设置', icon: 'Settings',    path: '/settings',  soon: true },
 ]

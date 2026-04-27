@@ -7,6 +7,51 @@ export function setAuthToken(token: string | null) {
   currentToken = token
 }
 
+/** 给 multipart / 直接 fetch 用 */
+export function getAuthHeader(): Record<string, string> {
+  return currentToken ? { Authorization: `Bearer ${currentToken}` } : {}
+}
+
+/** multipart/form-data 请求（不能用 apiFetch，会被强制设置 Content-Type） */
+export async function apiFetchForm<T = unknown>(
+  path: string,
+  form: FormData,
+  init: Omit<RequestInit, 'body' | 'headers'> = {},
+): Promise<T> {
+  const headers = getAuthHeader()
+  const resp = await fetch(path, { method: 'POST', ...init, headers, body: form })
+  if (resp.status === 401) {
+    onUnauthorized?.()
+    let msg = '登录已过期，请重新登录'
+    try { msg = (await resp.json())?.error || msg } catch { /* ignore */ }
+    throw new ApiError(msg, 401)
+  }
+  if (!resp.ok) {
+    let msg = `请求失败 (${resp.status})`
+    let body: unknown = undefined
+    try { body = await resp.json(); msg = (body as { error?: string })?.error || msg } catch { /* ignore */ }
+    throw new ApiError(msg, resp.status, body)
+  }
+  if (resp.status === 204) return undefined as T
+  return (await resp.json()) as T
+}
+
+/** 下载文件并触发浏览器保存 */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const headers = getAuthHeader()
+  const resp = await fetch(path, { headers })
+  if (!resp.ok) throw new ApiError(`下载失败 (${resp.status})`, resp.status)
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn
 }
