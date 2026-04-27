@@ -18,6 +18,24 @@ function rowToUser(row) {
   }
 }
 
+// GET /api/users/contacts — 任何登录用户都能调，用于选收件人（仅基本字段，不含权限/创建人）
+r.get('/contacts', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await db('users')
+      .select('id', 'username', 'display_name', 'role')
+      .whereNot({ id: req.user.id })
+      .orderBy('username', 'asc')
+    res.json({
+      contacts: rows.map(r => ({
+        id: r.id,
+        username: r.username,
+        displayName: r.display_name,
+        role: r.role,
+      })),
+    })
+  } catch (e) { next(e) }
+})
+
 // GET /api/users — admin only
 r.get('/', requireAuth, requireAdmin, async (_req, res, next) => {
   try {

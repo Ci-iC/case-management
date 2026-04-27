@@ -14,6 +14,7 @@ import authRoutes from './routes/auth.js'
 import userRoutes from './routes/users.js'
 import caseRoutes from './routes/cases.js'
 import reviewRoutes from './routes/reviews.js'
+import messageRoutes from './routes/messages.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -29,6 +30,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/cases', caseRoutes)
 app.use('/api/reviews', reviewRoutes)
+app.use('/api/messages', messageRoutes)
 
 // ─── Static frontend (prod) ────────────────────────────────────────────────────
 
