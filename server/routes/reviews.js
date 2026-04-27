@@ -88,7 +88,7 @@ const REVIEW_SELECT = [
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// POST /api/reviews — 上传文件 + 触发 AI 审核
+// POST /api/reviews — 上传文件 + 触发 AI 审核（走流水线，并行节点）
 r.post('/', upload.single('file'), async (req, res, next) => {
   let savedAbsPath = null
   try {
@@ -98,13 +98,26 @@ r.post('/', upload.single('file'), async (req, res, next) => {
     // case_id 仅当用户有案件权限时生效
     let caseId = null
     if (req.body?.caseId) {
-      if (req.user.role !== 'admin' && !req.user.canViewCases) {
-        // 静默忽略（无权限就不让挂案件，不报错）
-      } else {
+      if (req.user.role === 'admin' || req.user.canViewCases) {
         const caseRow = await db('cases').select('id').where({ id: req.body.caseId }).first()
         if (caseRow) caseId = caseRow.id
       }
     }
+
+    // 选流水线：用户传了 pipelineId 则用之，否则用 is_default
+    let pipeline
+    if (req.body?.pipelineId) {
+      pipeline = await db('pipelines').where({ id: req.body.pipelineId }).first()
+      if (!pipeline) throw new Error('指定的流水线不存在')
+    } else {
+      pipeline = await db('pipelines').where({ is_default: true }).first()
+      if (!pipeline) throw new Error('系统未配置默认流水线')
+    }
+
+    const steps = await db('pipeline_steps')
+      .where({ pipeline_id: pipeline.id, enabled: true })
+      .orderBy('position', 'asc')
+    if (steps.length === 0) throw new Error('流水线没有启用的节点')
 
     const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
     const text = await extractText(req.file.path, req.file.mimetype, originalName)
@@ -113,12 +126,33 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       throw new Error('文件文字超过 20 万字，请分片审核')
     }
 
-    // 取系统提示词
-    const promptRow = await db('app_settings').where({ key: 'review_prompt' }).first()
-    const systemPrompt = promptRow?.value || '你是一名企业法务，请审核以下文件并给出修改建议。'
-
+    // 并行调 AI：每个 step 独立提示词，输入都是原文档
     const userMsg = `【文件名】${originalName}\n\n【文件全文】\n${text}`
-    const ai = await chatCompletion({ system: systemPrompt, user: userMsg, model: req.body?.model })
+    const stepResults = await Promise.allSettled(
+      steps.map(s => chatCompletion({ system: s.prompt, user: userMsg, model: req.body?.model }))
+    )
+
+    // 拼接：按 position 顺序，每节点一个 ## 标题章节
+    const parts = []
+    let usedModel = null
+    let firstError = null
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]
+      const r2 = stepResults[i]
+      if (r2.status === 'fulfilled') {
+        parts.push(`## ${s.name}\n\n${r2.value.content}`)
+        usedModel = usedModel || r2.value.model
+      } else {
+        const errMsg = r2.reason?.message || String(r2.reason)
+        if (!firstError) firstError = errMsg
+        parts.push(`## ${s.name}\n\n[节点执行失败：${errMsg}]`)
+      }
+    }
+    // 如果全部节点都失败，整个请求 fail
+    if (stepResults.every(r2 => r2.status === 'rejected')) {
+      throw new Error(`所有节点都执行失败：${firstError}`)
+    }
+    const reviewText = parts.join('\n\n---\n\n')
 
     const storagePath = toStoragePath(savedAbsPath)
     const [inserted] = await db('case_reviews').insert({
@@ -127,8 +161,9 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       uploaded_storage_path: storagePath,
       uploaded_size_bytes: req.file.size,
       uploaded_mime_type: req.file.mimetype,
-      review_text: ai.content,
-      model: ai.model,
+      review_text: reviewText,
+      model: usedModel,
+      pipeline_id: pipeline.id,
       created_by: req.user.id,
     }, ['id'])
 
@@ -141,7 +176,7 @@ r.post('/', upload.single('file'), async (req, res, next) => {
     await writeAudit({
       actorId: req.user.id, action: 'review.create',
       targetType: 'review', targetId: inserted.id,
-      payload: { caseId, filename: originalName, model: ai.model, textChars: text.length },
+      payload: { caseId, filename: originalName, model: usedModel, pipeline: pipeline.name, steps: steps.length, textChars: text.length },
     })
 
     res.status(201).json({ review: rowToReview(row) })
