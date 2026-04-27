@@ -1,16 +1,32 @@
-// 后端代调 OpenAI（chat/completions）。Key 来自 .env，所有用户共用。
+// 后端代调 OpenAI（chat/completions）
+// 配置优先级：DB（app_settings）> .env > 内置默认值
+// admin 在「系统设置」里改的 Key/BaseURL/Model 立即生效（不用重启）
+
+import { db } from './db.js'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_MODEL = 'gpt-4o-mini'
 
+async function getOpenAIConfig() {
+  const rows = await db('app_settings')
+    .whereIn('key', ['openai_api_key', 'openai_base_url', 'openai_model_default'])
+  const m = Object.fromEntries(rows.map(r => [r.key, r.value]))
+  return {
+    apiKey: m.openai_api_key || process.env.OPENAI_API_KEY || '',
+    baseURL: (m.openai_base_url || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    defaultModel: m.openai_model_default || process.env.OPENAI_MODEL_DEFAULT || DEFAULT_MODEL,
+  }
+}
+
 /** 调 chat/completions，返回 message.content 字符串 */
 export async function chatCompletion({ system, user, model }) {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey || apiKey === 'sk-replace-me') {
-    throw new Error('后端未配置 OPENAI_API_KEY（请在 .env 中设置）')
+  const cfg = await getOpenAIConfig()
+  if (!cfg.apiKey || cfg.apiKey === 'sk-replace-me') {
+    throw new Error('未配置 OpenAI API Key（admin 请到「系统设置 → OpenAI 连接」填写）')
   }
-  const baseURL = (process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '')
-  const useModel = model || process.env.OPENAI_MODEL_DEFAULT || DEFAULT_MODEL
+  const apiKey = cfg.apiKey
+  const baseURL = cfg.baseURL
+  const useModel = model || cfg.defaultModel
 
   const resp = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',

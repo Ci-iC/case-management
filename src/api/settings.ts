@@ -3,7 +3,9 @@ import { apiFetch } from './client'
 export interface AppSetting {
   key: string
   value: string
-  updatedAt: string
+  isSecret: boolean
+  isSet: boolean
+  updatedAt: string | null
   updatedBy: string | null
 }
 
@@ -19,5 +21,8 @@ export const settingsApi = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     })
+  },
+  testOpenAI() {
+    return apiFetch<{ ok: true; message: string }>(`/api/settings/test-openai`, { method: 'POST' })
   },
 }
