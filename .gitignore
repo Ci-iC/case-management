@@ -1,0 +1,27 @@
+node_modules
+dist
+dist-exe
+
+# 环境变量 / 部署密钥，绝对不能进 git
+.env
+.env.production
+.env.local
+.deploy.env
+
+# SQLite 数据库（运行时产生，每机器独立）
+server/data/
+
+# PostgreSQL 数据目录（docker compose 挂载点）
+pgdata/
+
+# 打包临时
+_pack/
+
+# 误操作产生的空文件
+$null
+
+# 日志 / 缓存
+*.log
+.vite
+.DS_Store
+Thumbs.db

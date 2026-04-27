@@ -1,0 +1,19 @@
+appId: com.tianhong.case-management
+productName: 案件台账管理系统
+
+# 打包进 exe 的文件（Vite 构建产物 + Electron 主进程）
+files:
+  - dist/**
+  - electron/main.cjs
+
+directories:
+  output: dist-exe   # 输出目录
+
+win:
+  target:
+    - target: dir        # 输出为文件夹，不走 NSIS/winCodeSign，无需管理员权限
+      arch: x64
+  sign: null
+
+# 不使用 asar 打包，避免部分环境读取问题
+asar: false
