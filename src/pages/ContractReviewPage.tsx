@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Upload, FileText, Loader2, Send, Trash2, Download, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, FileText, Send, Trash2, Download, Sparkles, ChevronDown, ChevronUp, Workflow } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { ConfirmModal } from '@/components/ui/Modal'
 import { reviewsApi } from '@/api/reviews'
+import { pipelinesApi } from '@/api/pipelines'
 import { ApiError } from '@/api/client'
-import type { ReviewRecord } from '@/types'
+import type { ReviewRecord, Pipeline } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 
 type Mode = 'formal' | 'self'
@@ -33,6 +34,8 @@ export default function ContractReviewPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [composeFor, setComposeFor] = useState<ReviewRecord | null>(null)
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [pipelineId, setPipelineId] = useState<string>('')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -48,7 +51,23 @@ export default function ContractReviewPage() {
     }
   }
 
-  useEffect(() => { loadHistory() }, [])
+  async function loadPipelines() {
+    try {
+      const { pipelines } = await pipelinesApi.list()
+      setPipelines(pipelines)
+      // 默认选 is_default 那条
+      const def = pipelines.find(p => p.isDefault)
+      if (def) setPipelineId(def.id)
+      else if (pipelines[0]) setPipelineId(pipelines[0].id)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  useEffect(() => {
+    loadHistory()
+    loadPipelines()
+  }, [])
 
   function pickFile(f: File | null) {
     setFile(f)
@@ -60,7 +79,7 @@ export default function ContractReviewPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const { review } = await reviewsApi.create(file)
+      const { review } = await reviewsApi.create(file, { pipelineId: pipelineId || undefined })
       setLatest(review)
       setExpandedId(review.id)
       setFile(null)
@@ -72,6 +91,8 @@ export default function ContractReviewPage() {
       setSubmitting(false)
     }
   }
+
+  const selectedPipeline = pipelines.find(p => p.id === pipelineId) || null
 
   async function onDelete(id: string) {
     try {
@@ -121,8 +142,30 @@ export default function ContractReviewPage() {
 
         {/* Left: upload + current result */}
         <section className="col-span-7 flex flex-col overflow-hidden border-r border-slate-200">
-          {/* Upload area */}
-          <div className="border-b border-slate-100 px-6 py-4">
+          {/* Pipeline picker + Upload area */}
+          <div className="border-b border-slate-100 px-6 py-4 space-y-3">
+            {/* Pipeline picker */}
+            <div className="flex items-center gap-2">
+              <Workflow size={14} className="text-slate-400 shrink-0" />
+              <span className="text-xs text-slate-600 shrink-0">使用流水线：</span>
+              <select
+                className="flex-1 max-w-md rounded border border-slate-200 px-2.5 py-1 text-xs focus:outline-none focus:border-primary-400"
+                value={pipelineId}
+                onChange={(e) => setPipelineId(e.target.value)}
+                disabled={pipelines.length === 0}
+              >
+                {pipelines.length === 0 && <option value="">（加载中…）</option>}
+                {pipelines.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.isDefault ? ' · 默认' : ''}（{p.steps.filter(s => s.enabled).length} 个并行节点）
+                  </option>
+                ))}
+              </select>
+              {selectedPipeline?.description && (
+                <span className="text-[10px] text-slate-400 italic truncate">{selectedPipeline.description}</span>
+              )}
+            </div>
+
             <UploadZone
               file={file}
               onPick={pickFile}
@@ -132,7 +175,7 @@ export default function ContractReviewPage() {
               modeLabel={MODE_INFO[mode].label}
             />
             {error && (
-              <p className="mt-3 rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+              <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
                 {error}
               </p>
             )}

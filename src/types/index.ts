@@ -228,3 +228,25 @@ export interface Contact {
   displayName?: string | null
   role: 'admin' | 'user'
 }
+
+// ─── M5: AI 审核流水线 ──────────────────────────────────────────────────────
+
+export interface PipelineStep {
+  id: string
+  pipelineId: string
+  position: number
+  name: string
+  prompt: string
+  enabled: boolean
+}
+
+export interface Pipeline {
+  id: string
+  name: string
+  description: string | null
+  isDefault: boolean
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+  steps: PipelineStep[]
+}

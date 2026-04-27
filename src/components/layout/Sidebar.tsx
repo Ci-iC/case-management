@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users, FileSearch } from 'lucide-react'
+import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users, FileSearch, Workflow } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { NAV_ITEMS } from '@/constants'
 import { useAuthStore } from '@/store/useAuthStore'
 import { UsersAdminModal } from '@/components/admin/UsersAdminModal'
 import { SystemSettingsModal } from '@/components/admin/SystemSettingsModal'
+import { PipelinesAdminModal } from '@/components/admin/PipelinesAdminModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
@@ -20,6 +21,7 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
   const { user, logout } = useAuthStore()
   const [usersOpen, setUsersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pipelinesOpen, setPipelinesOpen] = useState(false)
 
   const isAdmin = user?.role === 'admin'
   const canViewCases = !!user?.canViewCases || isAdmin
@@ -89,6 +91,13 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
                 <span className="flex-1 text-left">用户管理</span>
               </button>
               <button
+                onClick={() => setPipelinesOpen(true)}
+                className="w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+              >
+                <Workflow size={16} className="text-slate-400" />
+                <span className="flex-1 text-left">审核流水线</span>
+              </button>
+              <button
                 onClick={() => setSettingsOpen(true)}
                 className="w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
               >
@@ -129,6 +138,7 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
 
       <UsersAdminModal open={usersOpen} onClose={() => setUsersOpen(false)} />
       <SystemSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <PipelinesAdminModal open={pipelinesOpen} onClose={() => setPipelinesOpen(false)} />
     </>
   )
 }
