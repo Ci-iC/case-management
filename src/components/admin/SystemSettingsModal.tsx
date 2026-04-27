@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, Sparkles, AlertCircle, CheckCircle2, Plug, Eye, EyeOff } from 'lucide-react'
+import { Save, AlertCircle, CheckCircle2, Plug, Eye, EyeOff, Workflow } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { settingsApi } from '@/api/settings'
@@ -9,7 +9,6 @@ interface Props {
   onClose: () => void
 }
 
-const REVIEW_PROMPT = 'review_prompt'
 const OPENAI_API_KEY = 'openai_api_key'
 const OPENAI_BASE_URL = 'openai_base_url'
 const OPENAI_MODEL = 'openai_model_default'
@@ -17,19 +16,13 @@ const OPENAI_MODEL = 'openai_model_default'
 interface OpenAIForm {
   apiKey: string
   apiKeyDisplay: string  // mask 后的，仅显示用
-  apiKeyDirty: boolean   // 用户是否真的改过
+  apiKeyDirty: boolean
   apiKeyIsSet: boolean
   baseURL: string
   model: string
 }
 
 export function SystemSettingsModal({ open, onClose }: Props) {
-  // 提示词
-  const [reviewPrompt, setReviewPrompt] = useState('')
-  const [originalPrompt, setOriginalPrompt] = useState('')
-  const [promptUpdatedAt, setPromptUpdatedAt] = useState<string | null>(null)
-
-  // OpenAI 配置
   const [openai, setOpenai] = useState<OpenAIForm>({
     apiKey: '',
     apiKeyDisplay: '',
@@ -42,8 +35,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
   const [showApiKey, setShowApiKey] = useState(false)
 
   const [loading, setLoading] = useState(false)
-  const [savingPrompt, setSavingPrompt] = useState(false)
-  const [savingOpenai, setSavingOpenai] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
@@ -54,14 +46,8 @@ export function SystemSettingsModal({ open, onClose }: Props) {
     try {
       const { settings } = await settingsApi.list()
       const m = Object.fromEntries(settings.map(s => [s.key, s]))
-
-      const prompt = m[REVIEW_PROMPT]
-      setReviewPrompt(prompt?.value || '')
-      setOriginalPrompt(prompt?.value || '')
-      setPromptUpdatedAt(prompt?.updatedAt || null)
-
       const ai: OpenAIForm = {
-        apiKey: '',  // 永远不预填，用户必须重新输入才会改
+        apiKey: '',  // 永远不预填，用户输入新值才会触发更新
         apiKeyDisplay: m[OPENAI_API_KEY]?.value || '',
         apiKeyDirty: false,
         apiKeyIsSet: !!m[OPENAI_API_KEY]?.isSet,
@@ -85,34 +71,16 @@ export function SystemSettingsModal({ open, onClose }: Props) {
     return () => clearTimeout(t)
   }, [flash])
 
-  const promptDirty = reviewPrompt !== originalPrompt
-  const openaiDirty = !!originalOpenai && (
+  const dirty = !!originalOpenai && (
     openai.apiKeyDirty ||
     openai.baseURL !== originalOpenai.baseURL ||
     openai.model !== originalOpenai.model
   )
 
-  async function savePrompt() {
-    if (!reviewPrompt.trim()) { setError('提示词不能为空'); return }
-    setSavingPrompt(true)
+  async function save() {
+    setSaving(true)
     setError(null)
     try {
-      const { setting } = await settingsApi.update(REVIEW_PROMPT, reviewPrompt)
-      setOriginalPrompt(setting.value)
-      setPromptUpdatedAt(setting.updatedAt)
-      setFlash('提示词已保存，下次审核立即生效')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '保存失败')
-    } finally {
-      setSavingPrompt(false)
-    }
-  }
-
-  async function saveOpenAI() {
-    setSavingOpenai(true)
-    setError(null)
-    try {
-      // 只更新真改过的字段
       if (openai.apiKeyDirty) {
         await settingsApi.update(OPENAI_API_KEY, openai.apiKey)
       }
@@ -127,7 +95,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : '保存失败')
     } finally {
-      setSavingOpenai(false)
+      setSaving(false)
     }
   }
 
@@ -135,8 +103,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
     setTesting(true)
     setError(null)
     try {
-      // 如果有未保存的改动，先提示
-      if (openaiDirty) {
+      if (dirty) {
         setError('请先保存当前修改再测试连通性')
         setTesting(false)
         return
@@ -152,7 +119,7 @@ export function SystemSettingsModal({ open, onClose }: Props) {
 
   return (
     <Modal open={open} onClose={onClose} title="系统设置">
-      <div className="w-[760px] space-y-5">
+      <div className="w-[640px] space-y-4">
         {flash && (
           <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
             <CheckCircle2 size={14} /> {flash}
@@ -177,25 +144,23 @@ export function SystemSettingsModal({ open, onClose }: Props) {
           </div>
 
           <Field label="API Key">
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  className="form-input pr-9"
-                  disabled={loading}
-                  value={openai.apiKey}
-                  placeholder={openai.apiKeyIsSet ? `当前：${openai.apiKeyDisplay}（输入新值以替换）` : 'sk-...'}
-                  onChange={(e) => setOpenai(s => ({ ...s, apiKey: e.target.value, apiKeyDirty: true }))}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
-                  title={showApiKey ? '隐藏' : '显示'}
-                >
-                  {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
+            <div className="relative">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                className="form-input pr-9"
+                disabled={loading}
+                value={openai.apiKey}
+                placeholder={openai.apiKeyIsSet ? `当前：${openai.apiKeyDisplay}（输入新值以替换）` : 'sk-...'}
+                onChange={(e) => setOpenai(s => ({ ...s, apiKey: e.target.value, apiKeyDirty: true }))}
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
+                title={showApiKey ? '隐藏' : '显示'}
+              >
+                {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
             </div>
             <p className="mt-1 text-[11px] text-slate-400">
               提交后立即生效，不会重启服务。Key 只 admin 能查看，普通用户不可见。
@@ -242,57 +207,22 @@ export function SystemSettingsModal({ open, onClose }: Props) {
               variant="primary"
               size="md"
               icon={<Save size={14} />}
-              loading={savingOpenai}
-              disabled={!openaiDirty}
-              onClick={saveOpenAI}
+              loading={saving}
+              disabled={!dirty}
+              onClick={save}
             >
               保存
             </Button>
           </div>
         </section>
 
-        {/* AI 审核提示词 */}
-        <section className="space-y-2 rounded-lg border border-slate-200 p-4">
-          <div className="flex items-center gap-2">
-            <Sparkles size={14} className="text-primary-600" />
-            <h4 className="text-sm font-semibold text-slate-800">AI 审核提示词</h4>
-          </div>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            发起合同审核时，AI 按这段提示词产出审核意见。下一步会扩展成可视化工作流（多节点串联）。
+        {/* 提示词管理跳转提示 */}
+        <section className="rounded-lg border border-dashed border-slate-200 px-4 py-3 flex items-center gap-3 text-xs text-slate-500">
+          <Workflow size={16} className="text-slate-400 shrink-0" />
+          <p className="flex-1 leading-relaxed">
+            AI 审核提示词已升级为「审核流水线」管理 —— 支持多节点并行 + 各自独立提示词。
+            到侧栏「<span className="text-slate-700 font-medium">审核流水线</span>」编辑。
           </p>
-          <textarea
-            className="form-textarea font-mono text-xs"
-            rows={12}
-            disabled={loading}
-            value={reviewPrompt}
-            onChange={(e) => setReviewPrompt(e.target.value)}
-          />
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] text-slate-400">
-              {promptUpdatedAt ? `上次更新：${new Date(promptUpdatedAt).toLocaleString('zh-CN')}` : ''}
-              {' '}· {reviewPrompt.length} 字
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                size="md"
-                disabled={!promptDirty || savingPrompt}
-                onClick={() => setReviewPrompt(originalPrompt)}
-              >
-                重置
-              </Button>
-              <Button
-                variant="primary"
-                size="md"
-                icon={<Save size={14} />}
-                loading={savingPrompt}
-                disabled={!promptDirty}
-                onClick={savePrompt}
-              >
-                保存
-              </Button>
-            </div>
-          </div>
         </section>
 
         <div className="flex justify-end pt-2 border-t border-slate-100">

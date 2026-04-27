@@ -46,11 +46,18 @@ async function extractText(absPath, mimeType, originalName) {
   if (ext === '.txt' || mimeType === 'text/plain') {
     return (await fs.readFile(absPath, 'utf8')).trim()
   }
-  if (ext === '.docx' || ext === '.doc' || mimeType?.includes('word')) {
+  if (ext === '.docx') {
     const mammoth = (await import('mammoth')).default
     const buf = await fs.readFile(absPath)
     const result = await mammoth.extractRawText({ buffer: buf })
     return (result.value || '').trim()
+  }
+  if (ext === '.doc') {
+    // 老版 .doc 是 OLE 二进制，用 word-extractor 读取
+    const WordExtractor = (await import('word-extractor')).default
+    const extractor = new WordExtractor()
+    const doc = await extractor.extract(absPath)
+    return (doc.getBody() || '').trim()
   }
   if (ext === '.pdf' || mimeType === 'application/pdf') {
     const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js')

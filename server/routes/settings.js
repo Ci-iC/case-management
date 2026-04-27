@@ -8,8 +8,8 @@ const r = Router()
 r.use(requireAuth, requireAdmin)
 
 // 白名单：哪些 key 允许通过这个 API 改
+// 注：review_prompt 在 v1.1 后由"审核流水线"取代，不再通过系统设置编辑
 const ALLOWED_KEYS = new Set([
-  'review_prompt',
   'openai_api_key',
   'openai_base_url',
   'openai_model_default',
@@ -71,10 +71,6 @@ r.put('/:key', async (req, res, next) => {
     const { value } = req.body || {}
     if (typeof value !== 'string') {
       return res.status(400).json({ error: 'value 必须是字符串' })
-    }
-    // 允许清空（除 review_prompt 外）
-    if (key === 'review_prompt' && !value.trim()) {
-      return res.status(400).json({ error: '审核提示词不能为空' })
     }
     if (value.length > 50_000) {
       return res.status(400).json({ error: '配置内容超过 5 万字' })
