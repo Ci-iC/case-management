@@ -13,6 +13,7 @@ import './db.js'
 import authRoutes from './routes/auth.js'
 import userRoutes from './routes/users.js'
 import caseRoutes from './routes/cases.js'
+import reviewRoutes from './routes/reviews.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -27,6 +28,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toIS
 app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/cases', caseRoutes)
+app.use('/api/reviews', reviewRoutes)
 
 // ─── Static frontend (prod) ────────────────────────────────────────────────────
 
