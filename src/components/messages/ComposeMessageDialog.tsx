@@ -11,17 +11,16 @@ interface Props {
   open: boolean
   onClose: () => void
   onSent?: () => void
-  /** 预填收件人 */
-  prefillReceiverId?: string
-  /** 预填 review（"回传给主管"流程） */
+  /** 预填 review（合同审核 → 发送给法务审核 流程） */
   prefillReview?: ReviewRecord
   /** 预填案件 */
   prefillCaseId?: string
 }
 
-export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId, prefillReview, prefillCaseId }: Props) {
+export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, prefillCaseId }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [receiverId, setReceiverId] = useState<string>('')
+  const [receiverLabel, setReceiverLabel] = useState<string>('')
   const [body, setBody] = useState('')
   const [caseId, setCaseId] = useState<string>('')
   const [attachments, setAttachments] = useState<File[]>([])
@@ -29,7 +28,14 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId,
   const [error, setError] = useState<string | null>(null)
 
   const cases = useCaseStore(s => s.cases)
-  const canViewCases = useAuthStore(s => !!s.user?.canViewCases) || useAuthStore(s => s.user?.role === 'admin')
+  const myRole = useAuthStore(s => s.user?.role)
+  const canViewCases = useAuthStore(s => !!s.user?.canViewCases) || myRole === 'admin'
+  const isAdmin = myRole === 'admin'
+
+  // admin 才能选收件人；普通用户固定发给法务（第一个 admin）
+  // 合同审核「发送给法务审核」即使是 admin 也固定流向（产品决策：消息流向只有"业务人员 → 法务"）
+  const lockReceiver = !!prefillReview || !isAdmin
+  const isLegalSubmission = !!prefillReview
 
   // 重置 + 加载联系人
   useEffect(() => {
@@ -38,23 +44,33 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId,
     setBody(prefillReview ? buildPrefillBody(prefillReview) : '')
     setCaseId(prefillCaseId || prefillReview?.caseId || '')
     setAttachments([])
-    setReceiverId(prefillReceiverId || '')
 
     messagesApi.contacts()
       .then(({ contacts }) => {
         setContacts(contacts)
-        // 如果没预填，默认选第一个 admin（业务人员的"主管"）
-        if (!prefillReceiverId) {
+        if (lockReceiver) {
+          // 普通用户 / 法务回传：自动选第一个 admin
           const firstAdmin = contacts.find(c => c.role === 'admin')
-          if (firstAdmin) setReceiverId(firstAdmin.id)
+          if (firstAdmin) {
+            setReceiverId(firstAdmin.id)
+            setReceiverLabel(firstAdmin.displayName || firstAdmin.username)
+          } else {
+            setError('系统中没有可用的法务/管理员账号')
+          }
+        } else {
+          // admin 可选收件人，默认空
+          setReceiverId('')
+          setReceiverLabel('')
         }
       })
       .catch(e => setError(e instanceof Error ? e.message : '加载联系人失败'))
-  }, [open, prefillReceiverId, prefillReview, prefillCaseId])
+  }, [open, prefillReview, prefillCaseId, lockReceiver])
 
   function buildPrefillBody(r: ReviewRecord): string {
-    return `以下是「${r.uploadedFilename}」的 AI 审核意见，请过目：\n\n（点击下方"AI 审核意见"展开查看全文）`
+    return `麻烦帮忙审核一下「${r.uploadedFilename}」。\n\nAI 已经过了一遍，意见见下方折叠区。我自己想要您再确认的点：\n（请补充）`
   }
+
+  const dialogTitle = isLegalSubmission ? '发送给法务审核' : '发送消息'
 
   function addFiles(files: FileList | null) {
     if (!files) return
@@ -99,10 +115,10 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId,
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">发送消息</h3>
+            <h3 className="text-base font-semibold text-slate-900">{dialogTitle}</h3>
             {prefillReview && (
               <p className="mt-0.5 text-xs text-slate-400">
-                已附带审核记录「{prefillReview.uploadedFilename}」
+                附带 AI 审核记录「{prefillReview.uploadedFilename}」+ 你写的留言
               </p>
             )}
           </div>
@@ -114,18 +130,25 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId,
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* 收件人 */}
           <Field label="收件人">
-            <select
-              className="form-select"
-              value={receiverId}
-              onChange={e => setReceiverId(e.target.value)}
-            >
-              <option value="">请选择…</option>
-              {contacts.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.displayName || c.username}（{c.username}）{c.role === 'admin' ? ' · 管理员' : ''}
-                </option>
-              ))}
-            </select>
+            {lockReceiver ? (
+              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <span>📧 法务{receiverLabel ? ` · ${receiverLabel}` : ''}</span>
+                <span className="ml-auto text-[10px] text-slate-400">系统固定收件人</span>
+              </div>
+            ) : (
+              <select
+                className="form-select"
+                value={receiverId}
+                onChange={e => setReceiverId(e.target.value)}
+              >
+                <option value="">请选择…</option>
+                {contacts.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.displayName || c.username}（{c.username}）{c.role === 'admin' ? ' · 管理员' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </Field>
 
           {/* 关联案件（仅当用户有权限时显示） */}
@@ -199,7 +222,7 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReceiverId,
         <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-3">
           <Button variant="secondary" size="md" onClick={onClose} disabled={submitting}>取消</Button>
           <Button variant="primary" size="md" icon={<Send size={14} />} loading={submitting} onClick={onSubmit}>
-            发送
+            {isLegalSubmission ? '发送给法务审核' : '发送'}
           </Button>
         </div>
       </div>

@@ -13,11 +13,11 @@ type Mode = 'formal' | 'self'
 const MODE_INFO: Record<Mode, { label: string; desc: string }> = {
   formal: {
     label: '发起审核',
-    desc: 'AI 审核完成后，可以选择回传给主管，附原文件 + 审核意见 + 留言',
+    desc: 'AI 审核完成后，可以选择「发送给法务审核」，附原文件 + 审核意见 + 留言',
   },
   self: {
     label: '智能审核',
-    desc: '只是给自己看一眼审核结果，不打扰主管',
+    desc: '只是给自己看一眼审核结果，不发给法务',
   },
 }
 
@@ -187,7 +187,7 @@ export default function ContractReviewPage() {
               <ReviewBlock
                 review={latest}
                 mode={mode}
-                onSendToManager={() => setComposeFor(latest)}
+                onSendToLegal={() => setComposeFor(latest)}
                 onDelete={() => setDeleteId(latest.id)}
                 onDownload={() => reviewsApi.downloadOriginal(latest.id, latest.uploadedFilename)}
               />
@@ -223,10 +223,8 @@ export default function ContractReviewPage() {
                 review={r}
                 expanded={expandedId === r.id}
                 onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
-                onSendToManager={() => setComposeFor(r)}
                 onDelete={() => setDeleteId(r.id)}
                 onDownload={() => reviewsApi.downloadOriginal(r.id, r.uploadedFilename)}
-                showSendButton={mode === 'formal'}
               />
             ))}
           </div>
@@ -318,11 +316,11 @@ function UploadZone({
 }
 
 function ReviewBlock({
-  review, mode, onSendToManager, onDelete, onDownload,
+  review, mode, onSendToLegal, onDelete, onDownload,
 }: {
   review: ReviewRecord
   mode: Mode
-  onSendToManager: () => void
+  onSendToLegal: () => void
   onDelete: () => void
   onDownload: () => void
 }) {
@@ -343,8 +341,8 @@ function ReviewBlock({
             原文件
           </Button>
           {mode === 'formal' && (
-            <Button variant="primary" size="sm" icon={<Send size={12} />} onClick={onSendToManager}>
-              回传给主管
+            <Button variant="primary" size="sm" icon={<Send size={12} />} onClick={onSendToLegal}>
+              发送给法务审核
             </Button>
           )}
           <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={onDelete}>
@@ -366,15 +364,13 @@ function ReviewBlock({
 }
 
 function HistoryItem({
-  review, expanded, onToggle, onSendToManager, onDelete, onDownload, showSendButton,
+  review, expanded, onToggle, onDelete, onDownload,
 }: {
   review: ReviewRecord
   expanded: boolean
   onToggle: () => void
-  onSendToManager: () => void
   onDelete: () => void
   onDownload: () => void
-  showSendButton: boolean
 }) {
   return (
     <div className="rounded-md border border-slate-200 bg-white">
@@ -400,11 +396,6 @@ function HistoryItem({
             <Button variant="outline" size="sm" icon={<Download size={11} />} onClick={onDownload}>
               原文件
             </Button>
-            {showSendButton && (
-              <Button variant="primary" size="sm" icon={<Send size={11} />} onClick={onSendToManager}>
-                回传
-              </Button>
-            )}
             <Button variant="ghost" size="sm" icon={<Trash2 size={11} />} onClick={onDelete}>
               删除
             </Button>
