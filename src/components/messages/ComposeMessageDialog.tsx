@@ -83,7 +83,10 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
   }
 
   async function onSubmit() {
-    if (!receiverId) { setError('请选择收件人'); return }
+    if (!receiverId) {
+      setError(lockReceiver ? '系统中没有可用的法务账号，请联系管理员' : '请选择收件人')
+      return
+    }
     if (!body.trim()) { setError('请填写留言'); return }
 
     setSubmitting(true)
@@ -151,8 +154,8 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
             )}
           </Field>
 
-          {/* 关联案件（仅当用户有权限时显示） */}
-          {canViewCases && (
+          {/* 关联案件（仅消息中心普通发消息 + admin 才显示；合同审核场景隐藏） */}
+          {canViewCases && !isLegalSubmission && (
             <Field label="关联案件（可选）">
               <select className="form-select" value={caseId} onChange={e => setCaseId(e.target.value)}>
                 <option value="">不关联</option>

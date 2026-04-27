@@ -5,6 +5,7 @@ import { ConfirmModal } from '@/components/ui/Modal'
 import { reviewsApi } from '@/api/reviews'
 import { pipelinesApi } from '@/api/pipelines'
 import { ApiError } from '@/api/client'
+import { useAuthStore } from '@/store/useAuthStore'
 import type { ReviewRecord, Pipeline } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 
@@ -24,6 +25,7 @@ const MODE_INFO: Record<Mode, { label: string; desc: string }> = {
 const ACCEPT = '.pdf,.docx,.doc,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'
 
 export default function ContractReviewPage() {
+  const isAdmin = useAuthStore(s => s.user?.role === 'admin')
   const [mode, setMode] = useState<Mode>('formal')
   const [file, setFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -114,28 +116,32 @@ export default function ContractReviewPage() {
           <h1 className="text-base font-semibold text-slate-900">合同审核</h1>
           <span className="text-xs text-slate-400">由 AI 给出修改建议</span>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
-          {(['formal', 'self'] as Mode[]).map(m => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={
-                'rounded-md px-3 py-1 text-xs font-medium transition-colors ' +
-                (mode === m
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700')
-              }
-            >
-              {MODE_INFO[m].label}
-            </button>
-          ))}
-        </div>
+        {!isAdmin && (
+          <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+            {(['formal', 'self'] as Mode[]).map(m => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={
+                  'rounded-md px-3 py-1 text-xs font-medium transition-colors ' +
+                  (mode === m
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700')
+                }
+              >
+                {MODE_INFO[m].label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
-      {/* Mode hint */}
-      <div className="border-b border-slate-100 bg-amber-50/40 px-6 py-2 text-xs text-amber-800">
-        {MODE_INFO[mode].desc}
-      </div>
+      {/* Mode hint - admin 不需要显示（admin 自己就是法务） */}
+      {!isAdmin && (
+        <div className="border-b border-slate-100 bg-amber-50/40 px-6 py-2 text-xs text-amber-800">
+          {MODE_INFO[mode].desc}
+        </div>
+      )}
 
       {/* Body */}
       <div className="grid flex-1 grid-cols-12 gap-0 overflow-hidden">
@@ -187,6 +193,7 @@ export default function ContractReviewPage() {
               <ReviewBlock
                 review={latest}
                 mode={mode}
+                showSendButton={mode === 'formal' && !isAdmin}
                 onSendToLegal={() => setComposeFor(latest)}
                 onDelete={() => setDeleteId(latest.id)}
                 onDownload={() => reviewsApi.downloadOriginal(latest.id, latest.uploadedFilename)}
@@ -316,10 +323,11 @@ function UploadZone({
 }
 
 function ReviewBlock({
-  review, mode, onSendToLegal, onDelete, onDownload,
+  review, showSendButton, onSendToLegal, onDelete, onDownload,
 }: {
   review: ReviewRecord
   mode: Mode
+  showSendButton: boolean
   onSendToLegal: () => void
   onDelete: () => void
   onDownload: () => void
@@ -340,7 +348,7 @@ function ReviewBlock({
           <Button variant="outline" size="sm" icon={<Download size={12} />} onClick={onDownload}>
             原文件
           </Button>
-          {mode === 'formal' && (
+          {showSendButton && (
             <Button variant="primary" size="sm" icon={<Send size={12} />} onClick={onSendToLegal}>
               发送给法务审核
             </Button>
