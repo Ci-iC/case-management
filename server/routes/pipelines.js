@@ -1,6 +1,6 @@
-// AI 审核流水线管理（admin only）
+// AI 审核模型管理（admin only）
 //
-// 一条流水线 = N 个节点。每个节点独立提示词。运行时 Promise.all 并行调 OpenAI，
+// 一条审核模型 = N 个节点。每个节点独立提示词。运行时 Promise.all 并行调 OpenAI，
 // 输出按 position 顺序拼接成最终审核意见。
 
 import { Router } from 'express'
@@ -65,7 +65,7 @@ r.get('/', async (_req, res, next) => {
 r.get('/:id', async (req, res, next) => {
   try {
     const full = await loadFull(req.params.id)
-    if (!full) return res.status(404).json({ error: '流水线不存在' })
+    if (!full) return res.status(404).json({ error: '审核模型不存在' })
     res.json({ pipeline: full })
   } catch (e) { next(e) }
 })
@@ -76,7 +76,7 @@ r.get('/:id', async (req, res, next) => {
 r.post('/', requireAdmin, async (req, res, next) => {
   try {
     const { name, description, isDefault, steps } = req.body || {}
-    if (!name || !String(name).trim()) return res.status(400).json({ error: '请填写流水线名称' })
+    if (!name || !String(name).trim()) return res.status(400).json({ error: '请填写审核模型名称' })
     if (!Array.isArray(steps) || steps.length === 0) return res.status(400).json({ error: '请至少添加一个节点' })
 
     const result = await db.transaction(async (trx) => {
@@ -106,7 +106,7 @@ r.put('/:id', requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
     const existing = await db('pipelines').where({ id }).first()
-    if (!existing) return res.status(404).json({ error: '流水线不存在' })
+    if (!existing) return res.status(404).json({ error: '审核模型不存在' })
 
     const { name, description, isDefault, steps } = req.body || {}
     if (name !== undefined && (!name || !String(name).trim())) {
@@ -125,8 +125,8 @@ r.put('/:id', requireAdmin, async (req, res, next) => {
           await trx('pipelines').update({ is_default: false }).where({ is_default: true })
           update.is_default = true
         } else if (isDefault === false && existing.is_default) {
-          // 不允许直接关掉默认（必须先把 default 切到别的），否则系统会没默认流水线
-          throw Object.assign(new Error('请把"默认"先切到其他流水线再保存'), { status: 400 })
+          // 不允许直接关掉默认（必须先把 default 切到别的），否则系统会没默认审核模型
+          throw Object.assign(new Error('请把"默认"先切到其他审核模型再保存'), { status: 400 })
         }
       }
       update.updated_at = new Date()
@@ -153,11 +153,11 @@ r.delete('/:id', requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
     const existing = await db('pipelines').where({ id }).first()
-    if (!existing) return res.status(404).json({ error: '流水线不存在' })
-    if (existing.is_default) return res.status(400).json({ error: '不能删除默认流水线，请先切换默认' })
+    if (!existing) return res.status(404).json({ error: '审核模型不存在' })
+    if (existing.is_default) return res.status(400).json({ error: '不能删除默认审核模型，请先切换默认' })
 
     const { count } = await db('pipelines').count({ count: '*' }).first()
-    if (Number(count) <= 1) return res.status(400).json({ error: '系统至少保留一条流水线' })
+    if (Number(count) <= 1) return res.status(400).json({ error: '系统至少保留一条审核模型' })
 
     await db('pipelines').where({ id }).delete()
     await writeAudit({

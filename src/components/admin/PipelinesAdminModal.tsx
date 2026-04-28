@@ -136,7 +136,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
 
   async function save() {
     if (!draft) return
-    if (!draft.name.trim()) { setError('请填写流水线名称'); return }
+    if (!draft.name.trim()) { setError('请填写审核模型名称'); return }
     if (draft.steps.length === 0) { setError('至少添加一个节点'); return }
     for (let i = 0; i < draft.steps.length; i++) {
       const s = draft.steps[i]
@@ -188,12 +188,12 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
 
   return (
     <>
-      <Modal open={open} onClose={onClose} title="AI 审核流水线管理">
+      <Modal open={open} onClose={onClose} title="AI 审核模型管理">
         <div className="w-[1080px] h-[640px] flex">
           {/* 左侧列表 */}
           <aside className="w-64 border-r border-slate-200 flex flex-col">
             <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">流水线</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">审核模型</p>
               <Button variant="primary" size="sm" icon={<Plus size={11} />} onClick={startNew}>
                 新建
               </Button>
@@ -248,7 +248,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
               <div className="flex-1 flex items-center justify-center text-slate-400">
                 <div className="text-center">
                   <Workflow size={32} className="mx-auto mb-2 text-slate-300" />
-                  <p className="text-sm">选左侧流水线编辑，或点"新建"</p>
+                  <p className="text-sm">选左侧审核模型编辑，或点"新建"</p>
                 </div>
               </div>
             ) : (
@@ -257,7 +257,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
                 <div className="px-4 py-3 border-b border-slate-100 space-y-2.5">
                   <div className="grid grid-cols-3 gap-3">
                     <div className="col-span-2">
-                      <label className="block text-[10px] font-medium text-slate-500 mb-1">流水线名称 *</label>
+                      <label className="block text-[10px] font-medium text-slate-500 mb-1">审核模型名称 *</label>
                       <input
                         className="form-input"
                         value={draft.name}
@@ -274,7 +274,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
                           onChange={e => setDraft({ ...draft, isDefault: e.target.checked })}
                         />
                         <Star size={12} className={draft.isDefault ? 'text-amber-500 fill-amber-400' : 'text-slate-300'} />
-                        <span>设为默认流水线</span>
+                        <span>设为默认审核模型</span>
                       </label>
                     </div>
                   </div>
@@ -284,7 +284,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
                       className="form-input"
                       value={draft.description}
                       onChange={e => setDraft({ ...draft, description: e.target.value })}
-                      placeholder="什么场景下用、跟其他流水线有什么区别"
+                      placeholder="什么场景下用、跟其他审核模型有什么区别"
                     />
                   </div>
                 </div>
@@ -389,7 +389,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
                           if (p) setDeleteConfirm(p)
                         }}
                       >
-                        删除流水线
+                        删除审核模型
                       </Button>
                     )}
                   </div>
@@ -402,7 +402,7 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
                       loading={saving}
                       onClick={save}
                     >
-                      {draft.id ? '保存修改' : '创建流水线'}
+                      {draft.id ? '保存修改' : '创建审核模型'}
                     </Button>
                   </div>
                 </div>
@@ -416,13 +416,13 @@ export function PipelinesAdminModal({ open, onClose }: Props) {
         open={!!deleteConfirm}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={doDelete}
-        title="删除流水线"
+        title="删除审核模型"
         confirmLabel="确认删除"
         confirmVariant="danger"
         message={
           <>
-            确认删除流水线「<strong>{deleteConfirm?.name}</strong>」？<br />
-            该流水线下的所有节点会一起删除。已用过这条流水线的历史审核记录不受影响。
+            确认删除审核模型「<strong>{deleteConfirm?.name}</strong>」？<br />
+            该审核模型下的所有节点会一起删除。已用过这条审核模型的历史审核记录不受影响。
           </>
         }
       />

@@ -95,7 +95,7 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
                 className="w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
               >
                 <Workflow size={16} className="text-slate-400" />
-                <span className="flex-1 text-left">审核流水线</span>
+                <span className="flex-1 text-left">审核模型</span>
               </button>
               <button
                 onClick={() => setSettingsOpen(true)}

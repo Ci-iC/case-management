@@ -261,7 +261,7 @@ export interface ContractReviewVersion {
   createdAt: string
 }
 
-// ─── M5: AI 审核流水线 ──────────────────────────────────────────────────────
+// ─── M5: AI 审核模型 ──────────────────────────────────────────────────────
 
 export interface PipelineStep {
   id: string

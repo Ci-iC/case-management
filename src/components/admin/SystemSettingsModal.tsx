@@ -220,8 +220,8 @@ export function SystemSettingsModal({ open, onClose }: Props) {
         <section className="rounded-lg border border-dashed border-slate-200 px-4 py-3 flex items-center gap-3 text-xs text-slate-500">
           <Workflow size={16} className="text-slate-400 shrink-0" />
           <p className="flex-1 leading-relaxed">
-            AI 审核提示词已升级为「审核流水线」管理 —— 支持多节点并行 + 各自独立提示词。
-            到侧栏「<span className="text-slate-700 font-medium">审核流水线</span>」编辑。
+            AI 审核提示词已升级为「审核模型」管理 —— 一个模型由多个并行节点组成，每个节点有独立提示词。
+            到侧栏「<span className="text-slate-700 font-medium">审核模型</span>」编辑。
           </p>
         </section>
 

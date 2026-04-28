@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import type { ReviewRecord, Pipeline, ContractRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
+import { ReviewParamsDialog, type Intensity } from '@/components/reviews/ReviewParamsDialog'
 
 type Mode = 'formal' | 'self'
 
@@ -42,8 +43,7 @@ export default function ContractReviewPage() {
   const [contractMode, setContractMode] = useState<'new' | 'existing'>('new')
   const [contractName, setContractName] = useState<string>('')
   const [contractId, setContractId] = useState<string>('')
-  const [ourRole, setOurRole] = useState<'' | 'party_a' | 'party_b'>('')
-  const [reviewIntensity, setReviewIntensity] = useState<'strict' | 'medium' | 'lenient'>('medium')
+  const [paramsOpen, setParamsOpen] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -91,9 +91,10 @@ export default function ContractReviewPage() {
     setError(null)
   }
 
-  async function onSubmit() {
-    if (!file) return
-    // 必须确定合同：新合同要填名称，已有合同要选一条
+  // 点"开始审核"按钮时调：先做前置校验，通过后弹参数对话框
+  function openParamsDialog() {
+    setError(null)
+    if (!file) { setError('请先选择文件'); return }
     if (contractMode === 'new' && !contractName.trim()) {
       setError('请填写合同名称（如"采购合同 - 某供应商"），方便后续在合同台账里追溯')
       return
@@ -102,6 +103,12 @@ export default function ContractReviewPage() {
       setError('请选择关联的已有合同，或切换到"新合同"')
       return
     }
+    setParamsOpen(true)
+  }
+
+  // 参数对话框确认后真正发起审核
+  async function doSubmit({ ourRole, reviewIntensity }: { ourRole: string; reviewIntensity: Intensity }) {
+    if (!file) return
     setSubmitting(true)
     setError(null)
     try {
@@ -116,12 +123,14 @@ export default function ContractReviewPage() {
       setLatest(review)
       setExpandedId(review.id)
       setFile(null)
-      setContractName('')  // 提交后清空合同名输入框
+      setContractName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
+      setParamsOpen(false)
       await loadHistory()
-      await loadContracts()  // 刷新合同列表（可能新建了一条）
+      await loadContracts()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : '审核失败'))
+      setParamsOpen(false)  // 失败时关闭对话框，错误显示在主区域
     } finally {
       setSubmitting(false)
     }
@@ -219,7 +228,7 @@ export default function ContractReviewPage() {
             {/* Pipeline picker */}
             <div className="flex items-center gap-2">
               <Workflow size={14} className="text-slate-400 shrink-0" />
-              <span className="text-xs text-slate-600 shrink-0">使用流水线：</span>
+              <span className="text-xs text-slate-600 shrink-0">审核模型：</span>
               <select
                 className="flex-1 max-w-md rounded border border-slate-200 px-2.5 py-1 text-xs focus:outline-none focus:border-primary-400"
                 value={pipelineId}
@@ -238,62 +247,10 @@ export default function ContractReviewPage() {
               )}
             </div>
 
-            {/* 我方立场 + 审核幅度 */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-600 shrink-0">我方立场：</span>
-              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                {([
-                  { v: '', label: '不指定' },
-                  { v: 'party_a', label: '甲方' },
-                  { v: 'party_b', label: '乙方' },
-                ] as const).map(opt => (
-                  <button
-                    key={opt.v}
-                    onClick={() => setOurRole(opt.v as typeof ourRole)}
-                    className={
-                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors ' +
-                      (ourRole === opt.v
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700')
-                    }
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-
-              <span className="ml-3 text-xs text-slate-600 shrink-0">审核幅度：</span>
-              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                {([
-                  { v: 'strict', label: '严格' },
-                  { v: 'medium', label: '中等' },
-                  { v: 'lenient', label: '宽松' },
-                ] as const).map(opt => (
-                  <button
-                    key={opt.v}
-                    onClick={() => setReviewIntensity(opt.v)}
-                    className={
-                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors ' +
-                      (reviewIntensity === opt.v
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700')
-                    }
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <span className="text-[10px] text-slate-400 italic">
-                {reviewIntensity === 'strict' && '宁严勿松，所有可能风险都标记'}
-                {reviewIntensity === 'medium' && '常规企业法务标准'}
-                {reviewIntensity === 'lenient' && '只标明显的法律 / 商业风险'}
-              </span>
-            </div>
-
             <UploadZone
               file={file}
               onPick={pickFile}
-              onSubmit={onSubmit}
+              onSubmit={openParamsDialog}
               submitting={submitting}
               fileInputRef={fileInputRef}
               modeLabel={MODE_INFO[mode].label}
@@ -359,6 +316,14 @@ export default function ContractReviewPage() {
         prefillReview={composeFor || undefined}
         onClose={() => setComposeFor(null)}
         onSent={() => setComposeFor(null)}
+      />
+
+      <ReviewParamsDialog
+        open={paramsOpen}
+        submitLabel={MODE_INFO[mode].label}
+        loading={submitting}
+        onCancel={() => setParamsOpen(false)}
+        onConfirm={doSubmit}
       />
     </div>
   )

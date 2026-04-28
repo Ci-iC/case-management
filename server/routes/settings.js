@@ -8,7 +8,7 @@ const r = Router()
 r.use(requireAuth, requireAdmin)
 
 // 白名单：哪些 key 允许通过这个 API 改
-// 注：review_prompt 在 v1.1 后由"审核流水线"取代，不再通过系统设置编辑
+// 注：review_prompt 在 v1.1 后由"审核模型"取代，不再通过系统设置编辑
 const ALLOWED_KEYS = new Set([
   'openai_api_key',
   'openai_base_url',

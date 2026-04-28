@@ -11,11 +11,11 @@ export const reviewsApi = {
     return apiFetch<{ review: ReviewRecord }>(`/api/reviews/${id}`)
   },
 
-  /** 上传文件并触发审核（按指定流水线，省略则用 default） */
+  /** 上传文件并触发审核（按指定审核模型，省略则用 default） */
   create(file: File, opts?: {
     caseId?: string; model?: string; pipelineId?: string;
     contractId?: string; contractName?: string;
-    ourRole?: 'party_a' | 'party_b' | ''
+    ourRole?: string  // freeform：可填"甲方"/"乙方"/或自定义角色（如"第三方"/"赞助方"）
     reviewIntensity?: 'strict' | 'medium' | 'lenient'
   }) {
     const form = new FormData()

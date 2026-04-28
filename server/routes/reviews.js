@@ -20,36 +20,32 @@ const r = Router()
 r.use(requireAuth)
 
 // ─── 统一审核结果 JSON Schema ─────────────────────────────────────────────────
-// 所有流水线节点的 prompt 后面都会追加这段，强制模型按统一格式输出。
+// 所有审核模型节点的 prompt 后面都会追加这段，强制模型按统一格式输出。
 // 每节点的 prompt 决定"审什么角度"，schema 决定"用什么形式输出"。
 
 const LEVELS = ['重大风险条款', '一般风险条款', '优化完善条款']
 
 // 上传时用户可指定"我方立场"和"审核幅度"，拼成一段附加指令引导 AI
 
-const OUR_ROLE_LABEL = {
-  party_a: '甲方',
-  party_b: '乙方',
-}
-
 const INTENSITY_GUIDE = {
   strict:
-    '【审核幅度】严格审核：所有可能存在风险或表述不严谨的条款都要标记。即使风险概率较小，' +
-    '只要可能对我方不利就列出。宁严勿松。',
+    '【审核幅度】严格的审核标准，尽可能争取我方利益。' +
+    '所有对我方可能不利的条款都要识别，争取每一处对我方更有利的修改空间。',
   medium:
-    '【审核幅度】中等审核：按常规企业法务标准，识别明显的风险条款和需优化的条款。',
+    '【审核幅度】中等审核标准，按常规企业法务标准识别明显的风险条款和需优化的条款。',
   lenient:
-    '【审核幅度】宽松审核：只标记明显的、严重的法律风险或商业损失条款。' +
+    '【审核幅度】宽松审核标准，只标记明显的、严重的法律风险或商业损失条款。' +
     '次要的表述瑕疵、约定俗成的标准条款不必挑剔。',
 }
 
 function buildContextPrompt({ ourRole, reviewIntensity }) {
   const lines = []
-  if (ourRole && OUR_ROLE_LABEL[ourRole]) {
+  // ourRole 是 freeform 字符串：前端可填"甲方"/"乙方"/自定义角色（如"第三方"/"赞助方"）
+  const role = String(ourRole || '').trim().slice(0, 50)
+  if (role) {
     lines.push(
-      `【我方立场】我方在本合同中的角色是：${OUR_ROLE_LABEL[ourRole]}。` +
-      `请优先识别对我方（${OUR_ROLE_LABEL[ourRole]}）不利的条款、` +
-      `潜在不公平待遇、过度义务，以及对方的免责或权利扩张。`
+      `【我方立场】我方在本合同中的角色是：${role}。` +
+      `请优先识别对我方（${role}）不利的条款、潜在不公平待遇、过度义务，以及对方的免责或权利扩张。`
     )
   }
   const intensityKey = reviewIntensity && INTENSITY_GUIDE[reviewIntensity] ? reviewIntensity : 'medium'
@@ -218,7 +214,7 @@ const REVIEW_SELECT = [
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// POST /api/reviews — 上传文件 + 触发 AI 审核（走流水线，并行节点）
+// POST /api/reviews — 上传文件 + 触发 AI 审核（走审核模型，并行节点）
 r.post('/', upload.single('file'), async (req, res, next) => {
   let savedAbsPath = null
   try {
@@ -246,20 +242,20 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       contractId = await ensureContractByName(req.user.id, req.body.contractName)
     }
 
-    // 选流水线：用户传了 pipelineId 则用之，否则用 is_default
+    // 选审核模型：用户传了 pipelineId 则用之，否则用 is_default
     let pipeline
     if (req.body?.pipelineId) {
       pipeline = await db('pipelines').where({ id: req.body.pipelineId }).first()
-      if (!pipeline) throw new Error('指定的流水线不存在')
+      if (!pipeline) throw new Error('指定的审核模型不存在')
     } else {
       pipeline = await db('pipelines').where({ is_default: true }).first()
-      if (!pipeline) throw new Error('系统未配置默认流水线')
+      if (!pipeline) throw new Error('系统未配置默认审核模型')
     }
 
     const steps = await db('pipeline_steps')
       .where({ pipeline_id: pipeline.id, enabled: true })
       .orderBy('position', 'asc')
-    if (steps.length === 0) throw new Error('流水线没有启用的节点')
+    if (steps.length === 0) throw new Error('审核模型没有启用的节点')
 
     const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
     const text = await extractText(req.file.path, req.file.mimetype, originalName)
