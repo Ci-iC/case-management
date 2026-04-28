@@ -12,7 +12,7 @@ import multer from 'multer'
 import path from 'node:path'
 import { db, writeAudit } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink, copyFile } from '../storage.js'
+import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
 import fs from 'node:fs/promises'
 
 const r = Router()
@@ -123,20 +123,13 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
 
       const messageId = inserted.id
 
-      const attachDir = path.join(ATTACHMENTS_ROOT, messageId)
-      let dirCreated = false
-      async function ensureAttachDir() {
-        if (dirCreated) return
-        await ensureDir(attachDir)
-        dirCreated = true
-      }
-
       // 1) 用户上传的附件：从 tmp 搬到 attachments/<message_id>/
       if (req.files && req.files.length > 0) {
-        await ensureAttachDir()
+        const dir = path.join(ATTACHMENTS_ROOT, messageId)
+        await ensureDir(dir)
         for (const f of req.files) {
           const original = Buffer.from(f.originalname, 'latin1').toString('utf8')
-          const target = path.join(attachDir, `${Date.now()}_${safeFilename(original)}`)
+          const target = path.join(dir, `${Date.now()}_${safeFilename(original)}`)
           await fs.rename(f.path, target)
           await trx('message_attachments').insert({
             message_id: messageId,
@@ -148,21 +141,20 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
         }
       }
 
-      // 2) 如果是从 review 回传的消息，自动把审核的原文件克隆成附件
-      //    这样法务收到消息后能直接下载原合同，不用再回去找审核记录
+      // 2) 如果是从 review 回传的消息，把审核的原文件作为"引用"附件
+      //    不复制物理文件，只在 message_attachments 写一条 review_id 引用 —— 省磁盘
+      //    下载时实时从 case_reviews 拿 storage_path
       if (normalizedReviewId) {
         const rv = await trx('case_reviews')
           .select('uploaded_filename', 'uploaded_storage_path', 'uploaded_size_bytes', 'uploaded_mime_type')
           .where({ id: normalizedReviewId })
           .first()
         if (rv?.uploaded_storage_path) {
-          await ensureAttachDir()
-          const target = path.join(attachDir, `${Date.now()}_review_${safeFilename(rv.uploaded_filename)}`)
-          await copyFile(toAbsolutePath(rv.uploaded_storage_path), target)
           await trx('message_attachments').insert({
             message_id: messageId,
+            review_id: normalizedReviewId,
             filename: rv.uploaded_filename,
-            storage_path: toStoragePath(target),
+            storage_path: null,  // 没有自己的物理文件
             size_bytes: rv.uploaded_size_bytes,
             mime_type: rv.uploaded_mime_type,
           })
@@ -269,7 +261,7 @@ r.post('/:id/read', async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
-// DELETE /api/messages/:id — 物理删除（含附件文件）
+// DELETE /api/messages/:id — 物理删除（只清自己上传的文件，引用 review 的不动）
 r.delete('/:id', async (req, res, next) => {
   try {
     const row = await db('messages').select('id', 'sender_id', 'receiver_id').where({ id: req.params.id }).first()
@@ -278,10 +270,14 @@ r.delete('/:id', async (req, res, next) => {
       return res.status(403).json({ error: '无权删除该消息' })
     }
 
-    const atts = await db('message_attachments').select('storage_path').where({ message_id: row.id })
-    await db('messages').where({ id: row.id }).delete()  // CASCADE 会删掉 message_attachments 行
-    for (const a of atts) await safeUnlink(toAbsolutePath(a.storage_path))
-    // 尝试清空附件目录
+    // 只 unlink 这条消息自己上传的附件（storage_path 非空）
+    // review_id 引用的附件不动 — 物理文件归审核记录所有
+    const ownAtts = await db('message_attachments')
+      .select('storage_path')
+      .where({ message_id: row.id })
+      .whereNotNull('storage_path')
+    await db('messages').where({ id: row.id }).delete()  // CASCADE 删 message_attachments 行
+    for (const a of ownAtts) await safeUnlink(toAbsolutePath(a.storage_path))
     try { await fs.rmdir(path.join(ATTACHMENTS_ROOT, row.id)) } catch { /* ignore */ }
 
     await writeAudit({
@@ -293,6 +289,7 @@ r.delete('/:id', async (req, res, next) => {
 })
 
 // GET /api/messages/:id/attachments/:aid — 下载附件
+// 优先用自己的 storage_path；如果是 review 引用，跟到 case_reviews 拿
 r.get('/:id/attachments/:aid', async (req, res, next) => {
   try {
     const m = await db('messages').select('id', 'sender_id', 'receiver_id').where({ id: req.params.id }).first()
@@ -301,13 +298,23 @@ r.get('/:id/attachments/:aid', async (req, res, next) => {
       return res.status(403).json({ error: '无权下载该附件' })
     }
     const a = await db('message_attachments')
-      .select('filename', 'storage_path', 'mime_type')
+      .select('filename', 'storage_path', 'mime_type', 'review_id')
       .where({ id: req.params.aid, message_id: m.id })
       .first()
     if (!a) return res.status(404).json({ error: '附件不存在' })
+
+    let resolvedPath = a.storage_path
+    if (!resolvedPath && a.review_id) {
+      const rv = await db('case_reviews').select('uploaded_storage_path').where({ id: a.review_id }).first()
+      resolvedPath = rv?.uploaded_storage_path || null
+    }
+    if (!resolvedPath) {
+      return res.status(404).json({ error: '原文件已被删除（关联的审核记录已清除）' })
+    }
+
     res.setHeader('Content-Type', a.mime_type || 'application/octet-stream')
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(a.filename)}`)
-    res.sendFile(toAbsolutePath(a.storage_path), (err) => { if (err && !res.headersSent) next(err) })
+    res.sendFile(toAbsolutePath(resolvedPath), (err) => { if (err && !res.headersSent) next(err) })
   } catch (e) { next(e) }
 })
 

@@ -38,9 +38,4 @@ export async function readFileBuffer(absPath) {
   return fs.readFile(absPath)
 }
 
-/** 复制文件（用于发消息时把 review 的原文件克隆成消息附件） */
-export async function copyFile(srcAbs, dstAbs) {
-  await fs.copyFile(srcAbs, dstAbs)
-}
-
 export { DATA_ROOT }
