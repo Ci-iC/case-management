@@ -8,6 +8,7 @@ import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 import type { MessageRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
+import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
 
 type Folder = 'inbox' | 'sent'
 
@@ -285,10 +286,8 @@ function MessageDetailView({ message, onDelete }: { message: MessageRecord; onDe
               </span>
             </button>
             {reviewExpanded && (
-              <div className="border-t border-amber-200/60 px-4 py-3">
-                <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 font-sans">
-                  {message.review.reviewText}
-                </pre>
+              <div className="border-t border-amber-200/60 px-4 py-3 bg-white">
+                <ReviewOpinionsView reviewText={message.review.reviewText} />
               </div>
             )}
           </div>

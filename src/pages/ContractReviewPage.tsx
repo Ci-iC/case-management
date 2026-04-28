@@ -8,6 +8,7 @@ import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 import type { ReviewRecord, Pipeline, ContractRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
+import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
 
 type Mode = 'formal' | 'self'
 
@@ -405,12 +406,10 @@ function ReviewBlock({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+        <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
           AI 审核意见
         </p>
-        <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 font-sans">
-          {review.reviewText}
-        </pre>
+        <ReviewOpinionsView reviewText={review.reviewText} />
       </div>
     </div>
   )
@@ -441,9 +440,9 @@ function HistoryItem({
       </button>
       {expanded && (
         <div className="border-t border-slate-100 px-3 py-2.5 space-y-2">
-          <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700 font-sans max-h-64 overflow-y-auto">
-            {review.reviewText}
-          </pre>
+          <div className="max-h-96 overflow-y-auto">
+            <ReviewOpinionsView reviewText={review.reviewText} compact />
+          </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="sm" icon={<Download size={11} />} onClick={onDownload}>
               原文件

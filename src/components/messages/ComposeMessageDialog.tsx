@@ -166,14 +166,13 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
             </Field>
           )}
 
-          {/* 引用审核 */}
+          {/* 引用审核（只显示摘要：原文件名 + 各层级条款数量） */}
           {prefillReview && (
             <Field label="引用审核意见">
               <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs font-medium text-slate-700 mb-1">{prefillReview.uploadedFilename}</p>
-                <pre className="text-xs text-slate-500 leading-relaxed font-sans whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                  {prefillReview.reviewText.slice(0, 300)}{prefillReview.reviewText.length > 300 ? '…' : ''}
-                </pre>
+                <p className="text-[11px] text-slate-500">{summarizeReview(prefillReview.reviewText)}</p>
+                <p className="text-[10px] text-slate-400 mt-1">完整意见会随消息一起发给法务</p>
               </div>
             </Field>
           )}
@@ -231,6 +230,19 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
       </div>
     </div>
   )
+}
+
+function summarizeReview(text: string): string {
+  try {
+    const obj = JSON.parse(text)
+    if (Array.isArray(obj?.review_opinions)) {
+      const parts = obj.review_opinions.map((l: { level: string; items: unknown[] }) =>
+        `${l.level} ${Array.isArray(l.items) ? l.items.length : 0} 条`
+      )
+      return parts.join(' · ')
+    }
+  } catch { /* 旧数据回落 */ }
+  return text.length > 80 ? text.slice(0, 80) + '…' : text
 }
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {

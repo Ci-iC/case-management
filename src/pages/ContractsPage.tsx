@@ -6,6 +6,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { contractsApi } from '@/api/contracts'
 import { reviewsApi } from '@/api/reviews'
+import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
 import { ApiError } from '@/api/client'
 import { cn } from '@/utils/helpers'
 import type { ContractRecord, ContractReviewVersion } from '@/types'
@@ -238,16 +239,12 @@ function VersionCard({
 
       {expanded && (
         <div className="border-t border-slate-100 px-4 py-3 space-y-3">
-          <div className="rounded bg-amber-50/40 border border-amber-100 px-3 py-2">
-            <div className="flex items-center gap-1 mb-1.5">
-              <Sparkles size={11} className="text-amber-600" />
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">AI 审核意见</p>
-            </div>
-            <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700 font-sans max-h-96 overflow-y-auto">
-              {review.reviewText}
-            </pre>
+          <div className="flex items-center gap-1 mb-1">
+            <Sparkles size={11} className="text-amber-600" />
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">AI 审核意见</p>
           </div>
-          <div className="flex items-center gap-2">
+          <ReviewOpinionsView reviewText={review.reviewText} />
+          <div className="flex items-center gap-2 pt-2">
             <Button
               variant="outline"
               size="sm"

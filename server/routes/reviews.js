@@ -19,6 +19,87 @@ import { ensureContractByName } from './contracts.js'
 const r = Router()
 r.use(requireAuth)
 
+// ─── 统一审核结果 JSON Schema ─────────────────────────────────────────────────
+// 所有流水线节点的 prompt 后面都会追加这段，强制模型按统一格式输出。
+// 每节点的 prompt 决定"审什么角度"，schema 决定"用什么形式输出"。
+
+const LEVELS = ['重大风险条款', '一般风险条款', '优化完善条款']
+
+const SCHEMA_INSTRUCTION = `请严格按以下 JSON 格式输出（仅输出合法 JSON 对象，不要 Markdown、不要解释、不要代码块包裹）：
+
+{
+  "review_opinions": [
+    {
+      "level": "重大风险条款",
+      "items": [
+        {
+          "serial_no": 1,
+          "clause_no": "第 X.X 条",
+          "original_text": "合同原文（不要自行概括，引用原句）",
+          "revised_text": "可以直接替换原条款的修改版本",
+          "comment": "修改意见，简要说明问题、风险和修改理由",
+          "risk_level": "高"
+        }
+      ]
+    },
+    { "level": "一般风险条款", "items": [] },
+    { "level": "优化完善条款", "items": [] }
+  ]
+}
+
+字段约束：
+- review_opinions 必须固定包含上述三个 level 对象，顺序固定
+- items 是数组；该层级没意见时返回 []
+- clause_no：合同有编号就引原编号（如"第 2.3 条"）；没有则填"未编号条款"
+- original_text 必须引用合同原文，不要自行概括
+- revised_text 必须是可以直接替换原条款的完整修改版本
+- risk_level 只能是 "高"、"中"、"低" 三选一
+- 如果你这次审核的角度不涉及某个层级，把那个层级的 items 留空即可`
+
+/** 把多个节点的 JSON 合并成一份；按 level 拼 items，serial_no 重新编号 */
+function mergeReviewOpinions(steps, results) {
+  const buckets = new Map(LEVELS.map(l => [l, []]))
+  for (let i = 0; i < steps.length; i++) {
+    const r = results[i]
+    if (r.status !== 'fulfilled') continue
+    let parsed
+    try {
+      parsed = JSON.parse(r.value.content)
+    } catch {
+      continue  // 单节点 JSON 解析失败：跳过它的贡献，不阻塞其他节点
+    }
+    if (!Array.isArray(parsed?.review_opinions)) continue
+    for (const layer of parsed.review_opinions) {
+      const level = String(layer?.level || '').trim()
+      if (!buckets.has(level)) continue
+      const items = Array.isArray(layer?.items) ? layer.items : []
+      for (const it of items) {
+        buckets.get(level).push(normalizeItem(it))
+      }
+    }
+  }
+  // 重新编号 serial_no（按 level 内的顺序），输出固定三层级
+  return {
+    review_opinions: LEVELS.map(level => ({
+      level,
+      items: buckets.get(level).map((it, idx) => ({ ...it, serial_no: idx + 1 })),
+    })),
+  }
+}
+
+function normalizeItem(it) {
+  const allowedRisk = new Set(['高', '中', '低'])
+  const risk = String(it?.risk_level || '').trim()
+  return {
+    serial_no: 0,  // 合并时重排
+    clause_no: String(it?.clause_no || '未编号条款').trim() || '未编号条款',
+    original_text: String(it?.original_text || '').trim(),
+    revised_text: String(it?.revised_text || '').trim(),
+    comment: String(it?.comment || '').trim(),
+    risk_level: allowedRisk.has(risk) ? risk : '中',
+  }
+}
+
 // ─── multer 配置：上传到 server/data/reviews/<userId>/<timestamp>_<filename> ───
 
 const UPLOAD_MAX_BYTES = Number(process.env.UPLOAD_MAX_BYTES) || 20 * 1024 * 1024
@@ -146,33 +227,29 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       throw new Error('文件文字超过 20 万字，请分片审核')
     }
 
-    // 并行调 AI：每个 step 独立提示词，输入都是原文档
+    // 并行调 AI：每个 step 独立提示词；每节点都强制返回统一的三层级 JSON Schema
     const userMsg = `【文件名】${originalName}\n\n【文件全文】\n${text}`
     const stepResults = await Promise.allSettled(
-      steps.map(s => chatCompletion({ system: s.prompt, user: userMsg, model: req.body?.model }))
+      steps.map(s => chatCompletion({
+        system: `${s.prompt}\n\n${SCHEMA_INSTRUCTION}`,
+        user: userMsg,
+        model: req.body?.model,
+        responseFormat: 'json_object',
+      }))
     )
 
-    // 拼接：按 position 顺序，每节点一个 ## 标题章节
-    const parts = []
+    // 解析 + 合并：按层级把各节点的 items 拼起来，serial_no 重新编号
+    const merged = mergeReviewOpinions(steps, stepResults)
     let usedModel = null
-    let firstError = null
-    for (let i = 0; i < steps.length; i++) {
-      const s = steps[i]
-      const r2 = stepResults[i]
-      if (r2.status === 'fulfilled') {
-        parts.push(`## ${s.name}\n\n${r2.value.content}`)
-        usedModel = usedModel || r2.value.model
-      } else {
-        const errMsg = r2.reason?.message || String(r2.reason)
-        if (!firstError) firstError = errMsg
-        parts.push(`## ${s.name}\n\n[节点执行失败：${errMsg}]`)
-      }
+    for (const r2 of stepResults) {
+      if (r2.status === 'fulfilled') { usedModel = r2.value.model; break }
     }
-    // 如果全部节点都失败，整个请求 fail
+    // 全部节点失败才整体报错
     if (stepResults.every(r2 => r2.status === 'rejected')) {
+      const firstError = stepResults[0].reason?.message || String(stepResults[0].reason)
       throw new Error(`所有节点都执行失败：${firstError}`)
     }
-    const reviewText = parts.join('\n\n---\n\n')
+    const reviewText = JSON.stringify(merged)
 
     const storagePath = toStoragePath(savedAbsPath)
     const [inserted] = await db('case_reviews').insert({

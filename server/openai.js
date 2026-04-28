@@ -18,8 +18,9 @@ async function getOpenAIConfig() {
   }
 }
 
-/** 调 chat/completions，返回 message.content 字符串 */
-export async function chatCompletion({ system, user, model }) {
+/** 调 chat/completions，返回 message.content 字符串
+ *  responseFormat:'json_object' 时强制模型返回合法 JSON */
+export async function chatCompletion({ system, user, model, responseFormat }) {
   const cfg = await getOpenAIConfig()
   if (!cfg.apiKey || cfg.apiKey === 'sk-replace-me') {
     throw new Error('未配置 OpenAI API Key（admin 请到「系统设置 → OpenAI 连接」填写）')
@@ -28,19 +29,24 @@ export async function chatCompletion({ system, user, model }) {
   const baseURL = cfg.baseURL
   const useModel = model || cfg.defaultModel
 
+  const body = {
+    model: useModel,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+  }
+  if (responseFormat === 'json_object') {
+    body.response_format = { type: 'json_object' }
+  }
+
   const resp = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: useModel,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-    }),
+    body: JSON.stringify(body),
   })
 
   if (!resp.ok) {
