@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, User as UserIcon, Briefcase } from 'lucide-react'
+import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, User as UserIcon, Briefcase, FolderOpen } from 'lucide-react'
 import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { usersApi } from '@/api/users'
@@ -27,6 +27,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
   const [newDisplayName, setNewDisplayName] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'user'>('user')
   const [newCanViewCases, setNewCanViewCases] = useState(false)
+  const [newCanViewContracts, setNewCanViewContracts] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null)
   const [resetTarget, setResetTarget] = useState<AuthUser | null>(null)
@@ -61,6 +62,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
     setNewDisplayName('')
     setNewRole('user')
     setNewCanViewCases(false)
+    setNewCanViewContracts(false)
   }
 
   async function handleCreate() {
@@ -76,6 +78,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
         role: newRole,
         displayName: newDisplayName.trim() || undefined,
         canViewCases: newRole === 'admin' ? true : newCanViewCases,
+        canViewContracts: newRole === 'admin' ? true : newCanViewContracts,
       })
       resetCreateForm()
       setShowCreate(false)
@@ -93,6 +96,18 @@ export function UsersAdminModal({ open, onClose }: Props) {
       await usersApi.setCaseAccess(u.id, next)
       setUsers(prev => prev.map(x => x.id === u.id ? { ...x, canViewCases: next } : x))
       setFlash(next ? `已开放「${u.username}」的案件管理权限` : `已关闭「${u.username}」的案件管理权限`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function toggleContractAccess(u: AuthUser) {
+    if (u.role === 'admin') return
+    const next = !u.canViewContracts
+    try {
+      await usersApi.setContractAccess(u.id, next)
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, canViewContracts: next } : x))
+      setFlash(next ? `已开放「${u.username}」的合同台账权限` : `已关闭「${u.username}」的合同台账权限`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -204,15 +219,26 @@ export function UsersAdminModal({ open, onClose }: Props) {
                 </div>
               </div>
               {newRole !== 'admin' && (
-                <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 rounded border-slate-300"
-                    checked={newCanViewCases}
-                    onChange={(e) => setNewCanViewCases(e.target.checked)}
-                  />
-                  <span>开放案件管理权限（勾选后该用户可看全部案件，不勾选只能用合同审核）</span>
-                </label>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-slate-300"
+                      checked={newCanViewCases}
+                      onChange={(e) => setNewCanViewCases(e.target.checked)}
+                    />
+                    <span>开放案件管理权限（勾选后可看全部案件）</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-slate-300"
+                      checked={newCanViewContracts}
+                      onChange={(e) => setNewCanViewContracts(e.target.checked)}
+                    />
+                    <span>开放合同台账权限（勾选后可看全部合同 + 历史版本）</span>
+                  </label>
+                </div>
               )}
               <div className="flex justify-end gap-2 pt-1">
                 <Button
@@ -279,6 +305,27 @@ export function UsersAdminModal({ open, onClose }: Props) {
                       disabled={u.role === 'admin'}
                     >
                       <Briefcase size={14} />
+                    </button>
+                    <button
+                      className={cn(
+                        'p-1.5 rounded transition-colors',
+                        u.role === 'admin'
+                          ? 'text-amber-500 cursor-default'
+                          : u.canViewContracts
+                            ? 'text-emerald-600 hover:bg-emerald-50'
+                            : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100',
+                      )}
+                      onClick={() => toggleContractAccess(u)}
+                      title={
+                        u.role === 'admin'
+                          ? '管理员默认有合同台账权限'
+                          : u.canViewContracts
+                            ? '点击关闭合同台账权限'
+                            : '点击开放合同台账权限'
+                      }
+                      disabled={u.role === 'admin'}
+                    >
+                      <FolderOpen size={14} />
                     </button>
                     <button
                       className="p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"

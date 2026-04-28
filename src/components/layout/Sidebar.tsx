@@ -25,11 +25,16 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
 
   const isAdmin = user?.role === 'admin'
   const canViewCases = !!user?.canViewCases || isAdmin
+  const canViewContracts = !!user?.canViewContracts || isAdmin
   const displayLabel = user?.displayName || user?.username || '未登录'
   const initial = (user?.displayName?.[0] || user?.username?.[0] || 'U').toUpperCase()
 
   // 隐藏没权限的菜单
-  const visibleItems = NAV_ITEMS.filter((it) => !('requiresCaseAccess' in it && it.requiresCaseAccess) || canViewCases)
+  const visibleItems = NAV_ITEMS.filter((it) => {
+    if ('requiresCaseAccess' in it && it.requiresCaseAccess && !canViewCases) return false
+    if ('requiresContractAccess' in it && it.requiresContractAccess && !canViewContracts) return false
+    return true
+  })
 
   return (
     <>

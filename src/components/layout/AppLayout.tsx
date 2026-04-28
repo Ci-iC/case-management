@@ -16,12 +16,14 @@ export default function AppLayout() {
   const [activeNav, setActiveNav] = useState<string>(canViewCases ? 'cases' : 'reviews')
   const [messagesOpen, setMessagesOpen] = useState(false)
 
+  const canViewContracts = isAdmin || !!user?.canViewContracts
+
   function showPage() {
     if (messagesOpen) return <MessagesPage />
     switch (activeNav) {
       case 'cases': return canViewCases ? <CasesPage /> : <ContractReviewPage />
       case 'reviews': return <ContractReviewPage />
-      case 'contracts': return <ContractsPage />
+      case 'contracts': return canViewContracts ? <ContractsPage /> : <ContractReviewPage />
       default: return <ContractReviewPage />
     }
   }

@@ -227,8 +227,7 @@ function VersionCard({
           </div>
           <p className="mt-0.5 text-[10px] text-slate-400">
             {new Date(review.createdAt).toLocaleString('zh-CN')} ·
-            上传人 {review.createdByDisplayName || review.createdByUsername || '—'} ·
-            模型 {review.model || '—'}
+            上传人 {review.createdByDisplayName || review.createdByUsername || '—'}
           </p>
         </div>
         <ChevronRight size={14} className={cn(
@@ -244,15 +243,35 @@ function VersionCard({
             <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">AI 审核意见</p>
           </div>
           <ReviewOpinionsView reviewText={review.reviewText} />
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2">
             <Button
               variant="outline"
               size="sm"
               icon={<Download size={11} />}
               onClick={() => reviewsApi.downloadOriginal(review.id, review.uploadedFilename)}
             >
-              下载原文件
+              下载原始版
             </Button>
+            {review.reviewedFilename ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Download size={11} />}
+                onClick={() => reviewsApi.downloadLegalRevision(review.id, review.reviewedFilename!)}
+              >
+                下载法务审核版
+              </Button>
+            ) : (
+              <span className="text-[10px] text-slate-400 italic">
+                法务尚未上传审核版
+              </span>
+            )}
+            {review.reviewedAt && (
+              <span className="text-[10px] text-slate-400">
+                · 法务版上传于 {new Date(review.reviewedAt).toLocaleString('zh-CN')}
+                {review.reviewedByDisplayName && `（${review.reviewedByDisplayName}）`}
+              </span>
+            )}
           </div>
         </div>
       )}

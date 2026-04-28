@@ -12,6 +12,14 @@ import { requireAuth } from '../auth.js'
 const r = Router()
 r.use(requireAuth)
 
+// 业务人员（无合同台账权限）也能调本路由：列表只看自己上传的、详情/编辑也只能动自己的。
+// 这样他们在「合同审核」页能选"已有合同的新版本"。
+// 前端菜单层面会隐藏合同台账入口给无权限用户。
+
+function canSeeAll(user) {
+  return user?.role === 'admin' || user?.canViewContracts
+}
+
 function rowToContract(row) {
   if (!row) return null
   return {
@@ -44,7 +52,7 @@ r.get('/', async (req, res, next) => {
       .leftJoin('users as u', 'c.created_by', 'u.id')
       .select(CONTRACT_SELECT)
       .orderBy('c.updated_at', 'desc')
-    if (req.user.role !== 'admin') q = q.where('c.created_by', req.user.id)
+    if (!canSeeAll(req.user)) q = q.where('c.created_by', req.user.id)
     const rows = await q
     res.json({ contracts: rows.map(rowToContract) })
   } catch (e) { next(e) }
@@ -59,17 +67,21 @@ r.get('/:id', async (req, res, next) => {
       .where('c.id', req.params.id)
       .first()
     if (!cRow) return res.status(404).json({ error: '合同不存在' })
-    if (req.user.role !== 'admin' && cRow.created_by !== req.user.id) {
+    if (!canSeeAll(req.user) && cRow.created_by !== req.user.id) {
       return res.status(403).json({ error: '无权查看该合同' })
     }
 
     // 该合同所有 review 版本（时间正序，方便看 v1/v2/v3）
     const reviews = await db('case_reviews as r')
       .leftJoin('users as u', 'r.created_by', 'u.id')
+      .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
       .select(
         'r.id', 'r.uploaded_filename', 'r.uploaded_size_bytes', 'r.uploaded_mime_type',
         'r.review_text', 'r.model', 'r.pipeline_id', 'r.created_by', 'r.created_at',
+        'r.reviewed_filename', 'r.reviewed_size_bytes', 'r.reviewed_mime_type',
+        'r.reviewed_by', 'r.reviewed_at',
         'u.username as created_by_username', 'u.display_name as created_by_display_name',
+        'rv.username as reviewed_by_username', 'rv.display_name as reviewed_by_display_name',
       )
       .where('r.contract_id', req.params.id)
       .orderBy('r.created_at', 'asc')
@@ -79,7 +91,7 @@ r.get('/:id', async (req, res, next) => {
         ...rowToContract(cRow),
         reviews: reviews.map((rv, idx) => ({
           id: rv.id,
-          version: idx + 1,  // 时间序号（v1, v2, ...）
+          version: idx + 1,
           uploadedFilename: rv.uploaded_filename,
           uploadedSizeBytes: rv.uploaded_size_bytes != null ? Number(rv.uploaded_size_bytes) : null,
           uploadedMimeType: rv.uploaded_mime_type,
@@ -90,6 +102,13 @@ r.get('/:id', async (req, res, next) => {
           createdByUsername: rv.created_by_username,
           createdByDisplayName: rv.created_by_display_name,
           createdAt: rv.created_at instanceof Date ? rv.created_at.toISOString() : rv.created_at,
+          reviewedFilename: rv.reviewed_filename || null,
+          reviewedSizeBytes: rv.reviewed_size_bytes != null ? Number(rv.reviewed_size_bytes) : null,
+          reviewedMimeType: rv.reviewed_mime_type || null,
+          reviewedBy: rv.reviewed_by || null,
+          reviewedByUsername: rv.reviewed_by_username || null,
+          reviewedByDisplayName: rv.reviewed_by_display_name || null,
+          reviewedAt: rv.reviewed_at instanceof Date ? rv.reviewed_at.toISOString() : (rv.reviewed_at || null),
         })),
       },
     })
@@ -137,7 +156,7 @@ r.put('/:id', async (req, res, next) => {
   try {
     const existing = await db('contracts').where({ id: req.params.id }).first()
     if (!existing) return res.status(404).json({ error: '合同不存在' })
-    if (req.user.role !== 'admin' && existing.created_by !== req.user.id) {
+    if (!canSeeAll(req.user) && existing.created_by !== req.user.id) {
       return res.status(403).json({ error: '无权修改该合同' })
     }
     const { name, description } = req.body || {}

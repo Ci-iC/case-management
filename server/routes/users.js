@@ -13,6 +13,7 @@ function rowToUser(row) {
     role: row.role,
     displayName: row.display_name,
     canViewCases: !!row.can_view_cases,
+    canViewContracts: !!row.can_view_contracts,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     createdBy: row.created_by,
   }
@@ -40,7 +41,7 @@ r.get('/contacts', requireAuth, async (req, res, next) => {
 r.get('/', requireAuth, requireAdmin, async (_req, res, next) => {
   try {
     const rows = await db('users')
-      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'created_at', 'created_by')
+      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'can_view_contracts', 'created_at', 'created_by')
       .orderBy('created_at', 'desc')
     res.json({ users: rows.map(rowToUser) })
   } catch (e) { next(e) }
@@ -49,13 +50,14 @@ r.get('/', requireAuth, requireAdmin, async (_req, res, next) => {
 // POST /api/users — admin only
 r.post('/', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const { username, password, role, displayName, canViewCases } = req.body || {}
+    const { username, password, role, displayName, canViewCases, canViewContracts } = req.body || {}
     if (!username || !password) return res.status(400).json({ error: '请填写账号和密码' })
     if (username.length < 2 || username.length > 32) return res.status(400).json({ error: '账号长度应为 2-32 个字符' })
     if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' })
     const normalizedRole = role === 'admin' ? 'admin' : 'user'
-    // admin 自动有案件管理权限；普通用户由 admin 创建时勾选
-    const normalizedCanView = normalizedRole === 'admin' ? true : !!canViewCases
+    // admin 自动有所有管理权限；普通用户由 admin 创建时勾选
+    const normalizedCanViewCases = normalizedRole === 'admin' ? true : !!canViewCases
+    const normalizedCanViewContracts = normalizedRole === 'admin' ? true : !!canViewContracts
 
     const exists = await db('users').select('id').where({ username }).first()
     if (exists) return res.status(409).json({ error: '该账号已存在' })
@@ -68,49 +70,54 @@ r.post('/', requireAuth, requireAdmin, async (req, res, next) => {
       password_hash: hash,
       role: normalizedRole,
       display_name: displayName || null,
-      can_view_cases: normalizedCanView,
+      can_view_cases: normalizedCanViewCases,
+      can_view_contracts: normalizedCanViewContracts,
       created_at: new Date(),
       created_by: req.user.id,
     })
 
     const created = await db('users')
-      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'created_at', 'created_by')
+      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'can_view_contracts', 'created_at', 'created_by')
       .where({ id }).first()
 
     await writeAudit({
       actorId: req.user.id, action: 'user.create',
       targetType: 'user', targetId: id,
-      payload: { username, role: normalizedRole, canViewCases: normalizedCanView },
+      payload: { username, role: normalizedRole, canViewCases: normalizedCanViewCases, canViewContracts: normalizedCanViewContracts },
     })
     res.status(201).json({ user: rowToUser(created) })
   } catch (e) { next(e) }
 })
 
-// PATCH /api/users/:id — admin only：目前只支持改 canViewCases
+// PATCH /api/users/:id — admin only：支持改 canViewCases / canViewContracts
 r.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
-    const { canViewCases } = req.body || {}
-    if (typeof canViewCases !== 'boolean') {
-      return res.status(400).json({ error: '请提供 canViewCases (boolean)' })
+    const body = req.body || {}
+    const update = {}
+    if (typeof body.canViewCases === 'boolean') update.can_view_cases = body.canViewCases
+    if (typeof body.canViewContracts === 'boolean') update.can_view_contracts = body.canViewContracts
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: '请提供 canViewCases 或 canViewContracts (boolean)' })
     }
 
     const target = await db('users').select('id', 'role').where({ id }).first()
     if (!target) return res.status(404).json({ error: '用户不存在' })
     // admin 强制保留权限，避免误关
-    if (target.role === 'admin' && canViewCases === false) {
-      return res.status(400).json({ error: '管理员的案件管理权限不可关闭' })
+    if (target.role === 'admin') {
+      if (update.can_view_cases === false) return res.status(400).json({ error: '管理员的案件管理权限不可关闭' })
+      if (update.can_view_contracts === false) return res.status(400).json({ error: '管理员的合同台账权限不可关闭' })
     }
 
-    await db('users').where({ id }).update({ can_view_cases: canViewCases })
+    await db('users').where({ id }).update(update)
     const updated = await db('users')
-      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'created_at', 'created_by')
+      .select('id', 'username', 'role', 'display_name', 'can_view_cases', 'can_view_contracts', 'created_at', 'created_by')
       .where({ id }).first()
 
     await writeAudit({
       actorId: req.user.id, action: 'user.update_permission',
       targetType: 'user', targetId: id,
-      payload: { canViewCases },
+      payload: body,
     })
     res.json({ user: rowToUser(updated) })
   } catch (e) { next(e) }

@@ -6,7 +6,11 @@ export const usersApi = {
     return apiFetch<{ users: AuthUser[] }>('/api/users')
   },
 
-  create(data: { username: string; password: string; role: 'admin' | 'user'; displayName?: string; canViewCases?: boolean }) {
+  create(data: {
+    username: string; password: string;
+    role: 'admin' | 'user'; displayName?: string;
+    canViewCases?: boolean; canViewContracts?: boolean;
+  }) {
     return apiFetch<{ user: AuthUser }>('/api/users', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -28,6 +32,13 @@ export const usersApi = {
     return apiFetch<{ user: AuthUser }>(`/api/users/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ canViewCases }),
+    })
+  },
+
+  setContractAccess(id: string, canViewContracts: boolean) {
+    return apiFetch<{ user: AuthUser }>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ canViewContracts }),
     })
   },
 }

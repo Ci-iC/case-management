@@ -11,7 +11,7 @@ import multer from 'multer'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { db, writeAudit } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, requireAdmin } from '../auth.js'
 import { chatCompletion } from '../openai.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
 import { ensureContractByName } from './contracts.js'
@@ -203,13 +203,23 @@ function rowToReview(row) {
     createdByUsername: row.created_by_username,
     createdByDisplayName: row.created_by_display_name,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    reviewedFilename: row.reviewed_filename || null,
+    reviewedSizeBytes: row.reviewed_size_bytes != null ? Number(row.reviewed_size_bytes) : null,
+    reviewedMimeType: row.reviewed_mime_type || null,
+    reviewedBy: row.reviewed_by || null,
+    reviewedByUsername: row.reviewed_by_username || null,
+    reviewedByDisplayName: row.reviewed_by_display_name || null,
+    reviewedAt: row.reviewed_at instanceof Date ? row.reviewed_at.toISOString() : (row.reviewed_at || null),
   }
 }
 
 const REVIEW_SELECT = [
   'r.id', 'r.case_id', 'r.uploaded_filename', 'r.uploaded_size_bytes', 'r.uploaded_mime_type',
   'r.review_text', 'r.model', 'r.created_by', 'r.created_at',
+  'r.reviewed_filename', 'r.reviewed_size_bytes', 'r.reviewed_mime_type',
+  'r.reviewed_by', 'r.reviewed_at',
   'u.username as created_by_username', 'u.display_name as created_by_display_name',
+  'rv.username as reviewed_by_username', 'rv.display_name as reviewed_by_display_name',
 ]
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -315,6 +325,7 @@ r.post('/', upload.single('file'), async (req, res, next) => {
 
     const row = await db('case_reviews as r')
       .leftJoin('users as u', 'r.created_by', 'u.id')
+      .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
       .select(REVIEW_SELECT)
       .where('r.id', inserted.id)
       .first()
@@ -337,6 +348,7 @@ r.get('/', async (req, res, next) => {
   try {
     let q = db('case_reviews as r')
       .leftJoin('users as u', 'r.created_by', 'u.id')
+      .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
       .select(REVIEW_SELECT)
       .orderBy('r.created_at', 'desc')
 
@@ -353,6 +365,7 @@ r.get('/:id', async (req, res, next) => {
   try {
     const row = await db('case_reviews as r')
       .leftJoin('users as u', 'r.created_by', 'u.id')
+      .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
       .select(REVIEW_SELECT)
       .where('r.id', req.params.id)
       .first()
@@ -388,6 +401,81 @@ r.delete('/:id', async (_req, res) => {
   return res.status(403).json({
     error: '审核记录不允许删除（合同台账需要完整追溯）',
   })
+})
+
+// ─── 法务审核版：法务（admin）上传修订稿，业务人员能下载 ──────────────────
+
+// POST /api/reviews/:id/legal-revision —— 仅 admin 上传修订版
+r.post('/:id/legal-revision', requireAdmin, upload.single('file'), async (req, res, next) => {
+  let savedAbsPath = null
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传修订版文件' })
+    savedAbsPath = req.file.path
+
+    const review = await db('case_reviews').where({ id: req.params.id }).first()
+    if (!review) {
+      await safeUnlink(savedAbsPath)
+      return res.status(404).json({ error: '审核记录不存在' })
+    }
+
+    // 旧的法务版（如果有）先删除文件，再用新的覆盖
+    if (review.reviewed_storage_path) {
+      await safeUnlink(toAbsolutePath(review.reviewed_storage_path))
+    }
+
+    const original = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
+    const storagePath = toStoragePath(savedAbsPath)
+
+    await db('case_reviews').where({ id: review.id }).update({
+      reviewed_filename: original,
+      reviewed_storage_path: storagePath,
+      reviewed_size_bytes: req.file.size,
+      reviewed_mime_type: req.file.mimetype,
+      reviewed_by: req.user.id,
+      reviewed_at: new Date(),
+    })
+
+    const row = await db('case_reviews as r')
+      .leftJoin('users as u', 'r.created_by', 'u.id')
+      .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
+      .select(REVIEW_SELECT)
+      .where('r.id', review.id)
+      .first()
+
+    await writeAudit({
+      actorId: req.user.id, action: 'review.legal_revision',
+      targetType: 'review', targetId: review.id,
+      payload: { filename: original, size: req.file.size },
+    })
+
+    res.json({ review: rowToReview(row) })
+  } catch (e) {
+    if (savedAbsPath) await safeUnlink(savedAbsPath)
+    next(e)
+  }
+})
+
+// GET /api/reviews/:id/legal-file —— 下载法务版
+// 权限：admin / 创建人 / 有合同台账权限的用户
+r.get('/:id/legal-file', async (req, res, next) => {
+  try {
+    const row = await db('case_reviews')
+      .select('reviewed_filename', 'reviewed_storage_path', 'reviewed_mime_type', 'created_by')
+      .where({ id: req.params.id })
+      .first()
+    if (!row) return res.status(404).json({ error: '审核记录不存在' })
+    if (!row.reviewed_storage_path) return res.status(404).json({ error: '该版本还没有法务审核版' })
+
+    const allowed =
+      req.user.role === 'admin' ||
+      req.user.canViewContracts ||
+      row.created_by === req.user.id
+    if (!allowed) return res.status(403).json({ error: '无权下载法务审核版' })
+
+    res.setHeader('Content-Type', row.reviewed_mime_type || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.reviewed_filename)}`)
+    res.sendFile(toAbsolutePath(row.reviewed_storage_path), (err) => { if (err && !res.headersSent) next(err) })
+  } catch (e) { next(e) }
 })
 
 export default r

@@ -180,6 +180,14 @@ export interface ReviewRecord {
   createdByUsername?: string
   createdByDisplayName?: string
   createdAt: string
+  // 法务审核版（admin 上传，业务人员能下载）
+  reviewedFilename: string | null
+  reviewedSizeBytes: number | null
+  reviewedMimeType: string | null
+  reviewedBy: string | null
+  reviewedByUsername: string | null
+  reviewedByDisplayName: string | null
+  reviewedAt: string | null
 }
 
 // ─── M4: 站内消息 ─────────────────────────────────────────────────────────────
@@ -259,6 +267,13 @@ export interface ContractReviewVersion {
   createdByUsername?: string
   createdByDisplayName?: string
   createdAt: string
+  reviewedFilename: string | null
+  reviewedSizeBytes: number | null
+  reviewedMimeType: string | null
+  reviewedBy: string | null
+  reviewedByUsername: string | null
+  reviewedByDisplayName: string | null
+  reviewedAt: string | null
 }
 
 // ─── M5: AI 审核模型 ──────────────────────────────────────────────────────

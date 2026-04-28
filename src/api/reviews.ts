@@ -34,6 +34,17 @@ export const reviewsApi = {
     return downloadFile(`/api/reviews/${id}/file`, filename)
   },
 
+  /** 仅 admin：上传法务审核版（覆盖旧的） */
+  uploadLegalRevision(reviewId: string, file: File) {
+    const form = new FormData()
+    form.append('file', file)
+    return apiFetchForm<{ review: ReviewRecord }>(`/api/reviews/${reviewId}/legal-revision`, form)
+  },
+
+  downloadLegalRevision(reviewId: string, filename: string) {
+    return downloadFile(`/api/reviews/${reviewId}/legal-file`, filename)
+  },
+
   remove(id: string) {
     return apiFetch<{ ok: true }>(`/api/reviews/${id}`, { method: 'DELETE' })
   },

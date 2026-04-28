@@ -6,6 +6,7 @@ export interface AuthUser {
   role: 'admin' | 'user'
   displayName?: string
   canViewCases?: boolean
+  canViewContracts?: boolean
   createdAt: string
   createdBy?: string
 }

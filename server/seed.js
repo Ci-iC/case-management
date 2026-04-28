@@ -23,6 +23,7 @@ async function seedAdmin() {
     role: 'admin',
     display_name: displayName,
     can_view_cases: true,
+    can_view_contracts: true,
     created_at: new Date(),
     created_by: 'system',
   })

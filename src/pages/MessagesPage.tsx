@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
-import { Mail, Send, Inbox, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Mail, Send, Inbox, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus, Upload, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { Button } from '@/components/ui/Button'
 import { ConfirmModal } from '@/components/ui/Modal'
 import { messagesApi } from '@/api/messages'
+import { reviewsApi } from '@/api/reviews'
 import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
 import type { MessageRecord } from '@/types'
@@ -137,7 +138,17 @@ export default function MessagesPage() {
           {selected ? (
             <MessageDetailView
               message={selected}
+              isAdmin={me?.role === 'admin'}
               onDelete={() => setDeleteId(selected.id)}
+              onLegalRevisionUploaded={async () => {
+                // 重新拉详情让 review 区域刷新（保留选中态）
+                if (selected) {
+                  try {
+                    const { message } = await messagesApi.get(selected.id)
+                    setSelected(message)
+                  } catch { /* ignore */ }
+                }
+              }}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center text-slate-400">
@@ -226,8 +237,38 @@ function MessageListItem({
 
 // ─── Detail View ──────────────────────────────────────────────────────────────
 
-function MessageDetailView({ message, onDelete }: { message: MessageRecord; onDelete: () => void }) {
+function MessageDetailView({
+  message, isAdmin, onDelete, onLegalRevisionUploaded,
+}: {
+  message: MessageRecord
+  isAdmin: boolean
+  onDelete: () => void
+  onLegalRevisionUploaded: () => void
+}) {
   const [reviewExpanded, setReviewExpanded] = useState(false)
+  const [uploadingLegal, setUploadingLegal] = useState(false)
+  const [uploadFlash, setUploadFlash] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const legalFileRef = useRef<HTMLInputElement>(null)
+
+  async function onPickLegalFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f || !message.reviewId) return
+    setUploadingLegal(true)
+    setUploadError(null)
+    setUploadFlash(null)
+    try {
+      await reviewsApi.uploadLegalRevision(message.reviewId, f)
+      setUploadFlash(`已上传法务审核版「${f.name}」，业务人员可在合同台账下载`)
+      onLegalRevisionUploaded()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : '上传失败')
+    } finally {
+      setUploadingLegal(false)
+      setTimeout(() => setUploadFlash(null), 4000)
+    }
+  }
   return (
     <>
       <div className="border-b border-slate-100 px-6 py-4">
@@ -289,6 +330,45 @@ function MessageDetailView({ message, onDelete }: { message: MessageRecord; onDe
               <div className="border-t border-amber-200/60 px-4 py-3 bg-white">
                 <ReviewOpinionsView reviewText={message.review.reviewText} />
               </div>
+            )}
+          </div>
+        )}
+
+        {/* 法务上传审核版（仅 admin、且消息有 review 引用） */}
+        {isAdmin && message.reviewId && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <Upload size={14} className="mt-0.5 text-emerald-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-800">上传法务审核版</p>
+                <p className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
+                  下载原合同修订后，把修订稿上传到这里，业务人员就能在「合同台账」对应版本下载法务审核版。
+                  重复上传会覆盖旧的。
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Upload size={11} />}
+                loading={uploadingLegal}
+                onClick={() => legalFileRef.current?.click()}
+              >
+                上传修订稿
+              </Button>
+              <input
+                ref={legalFileRef}
+                type="file"
+                className="hidden"
+                onChange={onPickLegalFile}
+              />
+            </div>
+            {uploadFlash && (
+              <p className="mt-2 flex items-center gap-1 text-xs text-emerald-700">
+                <CheckCircle2 size={12} /> {uploadFlash}
+              </p>
+            )}
+            {uploadError && (
+              <p className="mt-2 text-xs text-red-700">{uploadError}</p>
             )}
           </div>
         )}

@@ -45,7 +45,7 @@ export async function up(knex) {
 
   const [pipeline] = await knex('pipelines').insert({
     name: '通用合同审核',
-    description: '系统初始流水线，可在「流水线管理」里复制后修改提示词',
+    description: '系统初始审核模型，可在「审核模型管理」里复制后修改提示词',
     is_default: true,
     created_by: null,
   }, ['id'])
