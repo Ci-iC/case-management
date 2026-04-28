@@ -24,7 +24,7 @@ const MODE_INFO: Record<Mode, { label: string; desc: string }> = {
   },
 }
 
-const ACCEPT = '.pdf,.docx,.doc,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'
+const ACCEPT = '.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 export default function ContractReviewPage() {
   const isAdmin = useAuthStore(s => s.user?.role === 'admin')
@@ -367,7 +367,7 @@ function UploadZone({
           ) : (
             <>
               <p className="text-sm font-medium text-slate-600">点击或拖拽文件到这里</p>
-              <p className="text-xs text-slate-400">支持 .pdf / .docx / .txt，单文件 20MB 以内</p>
+              <p className="text-xs text-slate-400">请上传 Word（.doc / .docx 格式）文档，单文件 20MB 以内</p>
             </>
           )}
         </div>

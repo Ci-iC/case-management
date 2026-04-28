@@ -231,6 +231,16 @@ r.post('/', upload.single('file'), async (req, res, next) => {
     if (!req.file) return res.status(400).json({ error: '请上传文件' })
     savedAbsPath = req.file.path
 
+    // 限制 Word 格式：源头保证整条链路（上传→AI→法务修订）都是可编辑文档
+    {
+      const original = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
+      const ext = path.extname(original).toLowerCase()
+      if (ext !== '.doc' && ext !== '.docx') {
+        await safeUnlink(savedAbsPath)
+        return res.status(400).json({ error: '请上传 Word（.doc / .docx 格式）文档' })
+      }
+    }
+
     // case_id 仅当用户有案件权限时生效
     let caseId = null
     if (req.body?.caseId) {

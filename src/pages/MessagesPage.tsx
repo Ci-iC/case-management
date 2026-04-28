@@ -258,7 +258,7 @@ function MessageDetailView({
     // 限制必须是 Word 文档（.doc / .docx），方便业务人员后续在 Word 里继续修订
     const name = f.name.toLowerCase()
     if (!name.endsWith('.doc') && !name.endsWith('.docx')) {
-      setUploadError('法务审核版必须是 Word 文档（.doc 或 .docx），方便业务人员继续修订')
+      setUploadError('请上传 Word（.doc / .docx 格式）文档')
       return
     }
     setUploadingLegal(true)
@@ -348,8 +348,7 @@ function MessageDetailView({
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-800">上传法务审核版</p>
                 <p className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
-                  下载原合同修订后，把 <strong>Word 修订稿（.doc / .docx）</strong>上传到这里。
-                  业务人员可以在「合同台账」对应版本下载，方便他们继续修订。重复上传会覆盖旧的。
+                  请上传 Word（.doc / .docx 格式）文档。重复上传会覆盖旧的。
                 </p>
               </div>
               <Button
