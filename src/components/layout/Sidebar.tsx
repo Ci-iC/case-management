@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users, FileSearch, Workflow } from 'lucide-react'
+import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, Users, FileSearch, Workflow, FolderOpen } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { NAV_ITEMS } from '@/constants'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -9,7 +9,7 @@ import { PipelinesAdminModal } from '@/components/admin/PipelinesAdminModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
-  Briefcase, Calendar, BarChart2, Settings, FileSearch,
+  Briefcase, Calendar, BarChart2, Settings, FileSearch, FolderOpen,
 }
 
 interface SidebarProps {

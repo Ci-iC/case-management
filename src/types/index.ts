@@ -229,6 +229,38 @@ export interface Contact {
   role: 'admin' | 'user'
 }
 
+// ─── M6: 合同台账 ─────────────────────────────────────────────────────────────
+
+export interface ContractRecord {
+  id: string
+  name: string
+  description: string | null
+  createdBy: string | null
+  createdByUsername?: string
+  createdByDisplayName?: string
+  createdAt: string
+  updatedAt: string
+  versionCount: number
+  lastReviewedAt: string | null
+  /** 详情时附带 */
+  reviews?: ContractReviewVersion[]
+}
+
+export interface ContractReviewVersion {
+  id: string
+  version: number
+  uploadedFilename: string
+  uploadedSizeBytes: number | null
+  uploadedMimeType: string | null
+  reviewText: string
+  model: string | null
+  pipelineId: string | null
+  createdBy: string | null
+  createdByUsername?: string
+  createdByDisplayName?: string
+  createdAt: string
+}
+
 // ─── M5: AI 审核流水线 ──────────────────────────────────────────────────────
 
 export interface PipelineStep {

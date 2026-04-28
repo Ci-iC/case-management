@@ -14,6 +14,7 @@ import { db, writeAudit } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { chatCompletion } from '../openai.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
+import { ensureContractByName } from './contracts.js'
 
 const r = Router()
 r.use(requireAuth)
@@ -111,6 +112,18 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       }
     }
 
+    // 合同台账关联：优先 contractId，没传就用 contractName 找/建
+    let contractId = null
+    if (req.body?.contractId) {
+      const cRow = await db('contracts').select('id', 'created_by').where({ id: req.body.contractId }).first()
+      if (cRow && (req.user.role === 'admin' || cRow.created_by === req.user.id)) {
+        contractId = cRow.id
+      }
+    }
+    if (!contractId && req.body?.contractName) {
+      contractId = await ensureContractByName(req.user.id, req.body.contractName)
+    }
+
     // 选流水线：用户传了 pipelineId 则用之，否则用 is_default
     let pipeline
     if (req.body?.pipelineId) {
@@ -164,6 +177,7 @@ r.post('/', upload.single('file'), async (req, res, next) => {
     const storagePath = toStoragePath(savedAbsPath)
     const [inserted] = await db('case_reviews').insert({
       case_id: caseId,
+      contract_id: contractId,
       uploaded_filename: originalName,
       uploaded_storage_path: storagePath,
       uploaded_size_bytes: req.file.size,
@@ -173,6 +187,11 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       pipeline_id: pipeline.id,
       created_by: req.user.id,
     }, ['id'])
+
+    // 更新合同的 updated_at（让最新审核的合同排在台账顶部）
+    if (contractId) {
+      await db('contracts').where({ id: contractId }).update({ updated_at: new Date() })
+    }
 
     const row = await db('case_reviews as r')
       .leftJoin('users as u', 'r.created_by', 'u.id')
@@ -243,26 +262,12 @@ r.get('/:id/file', async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
-// DELETE /api/reviews/:id
-r.delete('/:id', async (req, res, next) => {
-  try {
-    const row = await db('case_reviews')
-      .select('id', 'uploaded_storage_path', 'created_by', 'uploaded_filename')
-      .where({ id: req.params.id })
-      .first()
-    if (!row) return res.status(404).json({ error: '审核记录不存在' })
-    if (req.user.role !== 'admin' && row.created_by !== req.user.id) {
-      return res.status(403).json({ error: '无权删除该审核记录' })
-    }
-    await db('case_reviews').where({ id: row.id }).delete()
-    await safeUnlink(toAbsolutePath(row.uploaded_storage_path))
-    await writeAudit({
-      actorId: req.user.id, action: 'review.delete',
-      targetType: 'review', targetId: row.id,
-      payload: { filename: row.uploaded_filename },
-    })
-    res.json({ ok: true })
-  } catch (e) { next(e) }
+// DELETE /api/reviews/:id —— 禁用：审核记录是合同台账追溯的依据，不允许删除
+// 如需真的清理（如误上传敏感文件），由 DBA 直接操作数据库
+r.delete('/:id', async (_req, res) => {
+  return res.status(403).json({
+    error: '审核记录不允许删除（合同台账需要完整追溯）',
+  })
 })
 
 export default r

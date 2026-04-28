@@ -4,6 +4,7 @@ import { TopBar } from './TopBar'
 import { useAuthStore } from '@/store/useAuthStore'
 import CasesPage from '@/pages/CasesPage'
 import ContractReviewPage from '@/pages/ContractReviewPage'
+import ContractsPage from '@/pages/ContractsPage'
 import MessagesPage from '@/pages/MessagesPage'
 
 export default function AppLayout() {
@@ -20,6 +21,7 @@ export default function AppLayout() {
     switch (activeNav) {
       case 'cases': return canViewCases ? <CasesPage /> : <ContractReviewPage />
       case 'reviews': return <ContractReviewPage />
+      case 'contracts': return <ContractsPage />
       default: return <ContractReviewPage />
     }
   }

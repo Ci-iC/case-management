@@ -12,12 +12,17 @@ export const reviewsApi = {
   },
 
   /** 上传文件并触发审核（按指定流水线，省略则用 default） */
-  create(file: File, opts?: { caseId?: string; model?: string; pipelineId?: string }) {
+  create(file: File, opts?: {
+    caseId?: string; model?: string; pipelineId?: string;
+    contractId?: string; contractName?: string;
+  }) {
     const form = new FormData()
     form.append('file', file)
     if (opts?.caseId) form.append('caseId', opts.caseId)
     if (opts?.model) form.append('model', opts.model)
     if (opts?.pipelineId) form.append('pipelineId', opts.pipelineId)
+    if (opts?.contractId) form.append('contractId', opts.contractId)
+    if (opts?.contractName) form.append('contractName', opts.contractName)
     return apiFetchForm<{ review: ReviewRecord }>('/api/reviews', form)
   },
 

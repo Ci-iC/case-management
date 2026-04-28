@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Upload, FileText, Send, Trash2, Download, Sparkles, ChevronDown, ChevronUp, Workflow } from 'lucide-react'
+import { Upload, FileText, Send, Download, Sparkles, ChevronDown, ChevronUp, Workflow } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { ConfirmModal } from '@/components/ui/Modal'
 import { reviewsApi } from '@/api/reviews'
 import { pipelinesApi } from '@/api/pipelines'
+import { contractsApi } from '@/api/contracts'
 import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
-import type { ReviewRecord, Pipeline } from '@/types'
+import type { ReviewRecord, Pipeline, ContractRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 
 type Mode = 'formal' | 'self'
@@ -34,10 +34,13 @@ export default function ContractReviewPage() {
   const [history, setHistory] = useState<ReviewRecord[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [deleteId, setDeleteId] = useState<string | null>(null)
   const [composeFor, setComposeFor] = useState<ReviewRecord | null>(null)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [pipelineId, setPipelineId] = useState<string>('')
+  const [contracts, setContracts] = useState<ContractRecord[]>([])
+  const [contractMode, setContractMode] = useState<'new' | 'existing'>('new')
+  const [contractName, setContractName] = useState<string>('')
+  const [contractId, setContractId] = useState<string>('')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -57,7 +60,6 @@ export default function ContractReviewPage() {
     try {
       const { pipelines } = await pipelinesApi.list()
       setPipelines(pipelines)
-      // 默认选 is_default 那条
       const def = pipelines.find(p => p.isDefault)
       if (def) setPipelineId(def.id)
       else if (pipelines[0]) setPipelineId(pipelines[0].id)
@@ -66,9 +68,19 @@ export default function ContractReviewPage() {
     }
   }
 
+  async function loadContracts() {
+    try {
+      const { contracts } = await contractsApi.list()
+      setContracts(contracts)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   useEffect(() => {
     loadHistory()
     loadPipelines()
+    loadContracts()
   }, [])
 
   function pickFile(f: File | null) {
@@ -78,15 +90,31 @@ export default function ContractReviewPage() {
 
   async function onSubmit() {
     if (!file) return
+    // 必须确定合同：新合同要填名称，已有合同要选一条
+    if (contractMode === 'new' && !contractName.trim()) {
+      setError('请填写合同名称（如"采购合同 - 某供应商"），方便后续在合同台账里追溯')
+      return
+    }
+    if (contractMode === 'existing' && !contractId) {
+      setError('请选择关联的已有合同，或切换到"新合同"')
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
-      const { review } = await reviewsApi.create(file, { pipelineId: pipelineId || undefined })
+      const opts: Parameters<typeof reviewsApi.create>[1] = {
+        pipelineId: pipelineId || undefined,
+      }
+      if (contractMode === 'new') opts.contractName = contractName.trim()
+      else opts.contractId = contractId
+      const { review } = await reviewsApi.create(file, opts)
       setLatest(review)
       setExpandedId(review.id)
       setFile(null)
+      setContractName('')  // 提交后清空合同名输入框
       if (fileInputRef.current) fileInputRef.current.value = ''
       await loadHistory()
+      await loadContracts()  // 刷新合同列表（可能新建了一条）
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : '审核失败'))
     } finally {
@@ -95,17 +123,6 @@ export default function ContractReviewPage() {
   }
 
   const selectedPipeline = pipelines.find(p => p.id === pipelineId) || null
-
-  async function onDelete(id: string) {
-    try {
-      await reviewsApi.remove(id)
-      setHistory(prev => prev.filter(r => r.id !== id))
-      if (latest?.id === id) setLatest(null)
-    } catch (e) {
-      window.alert(`删除失败：${e instanceof Error ? e.message : String(e)}`)
-    }
-    setDeleteId(null)
-  }
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -148,8 +165,52 @@ export default function ContractReviewPage() {
 
         {/* Left: upload + current result */}
         <section className="col-span-7 flex flex-col overflow-hidden border-r border-slate-200">
-          {/* Pipeline picker + Upload area */}
+          {/* Contract picker + Pipeline picker + Upload area */}
           <div className="border-b border-slate-100 px-6 py-4 space-y-3">
+            {/* Contract picker */}
+            <div className="flex items-center gap-2">
+              <FileText size={14} className="text-slate-400 shrink-0" />
+              <span className="text-xs text-slate-600 shrink-0">合同：</span>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5 shrink-0">
+                {(['new', 'existing'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setContractMode(m)}
+                    className={
+                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors ' +
+                      (contractMode === m
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700')
+                    }
+                  >
+                    {m === 'new' ? '新合同' : '已有合同的新版本'}
+                  </button>
+                ))}
+              </div>
+              {contractMode === 'new' ? (
+                <input
+                  type="text"
+                  className="flex-1 max-w-md rounded border border-slate-200 px-2.5 py-1 text-xs focus:outline-none focus:border-primary-400"
+                  value={contractName}
+                  onChange={(e) => setContractName(e.target.value)}
+                  placeholder='给这份合同起个名字，如"采购合同 - 某供应商"'
+                />
+              ) : (
+                <select
+                  className="flex-1 max-w-md rounded border border-slate-200 px-2.5 py-1 text-xs focus:outline-none focus:border-primary-400"
+                  value={contractId}
+                  onChange={(e) => setContractId(e.target.value)}
+                >
+                  <option value="">选择已有合同…</option>
+                  {contracts.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}（已审 {c.versionCount} 次）
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
             {/* Pipeline picker */}
             <div className="flex items-center gap-2">
               <Workflow size={14} className="text-slate-400 shrink-0" />
@@ -195,7 +256,6 @@ export default function ContractReviewPage() {
                 mode={mode}
                 showSendButton={mode === 'formal' && !isAdmin}
                 onSendToLegal={() => setComposeFor(latest)}
-                onDelete={() => setDeleteId(latest.id)}
                 onDownload={() => reviewsApi.downloadOriginal(latest.id, latest.uploadedFilename)}
               />
             ) : (
@@ -230,23 +290,12 @@ export default function ContractReviewPage() {
                 review={r}
                 expanded={expandedId === r.id}
                 onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
-                onDelete={() => setDeleteId(r.id)}
                 onDownload={() => reviewsApi.downloadOriginal(r.id, r.uploadedFilename)}
               />
             ))}
           </div>
         </aside>
       </div>
-
-      <ConfirmModal
-        open={!!deleteId}
-        onClose={() => setDeleteId(null)}
-        onConfirm={() => deleteId && onDelete(deleteId)}
-        title="删除审核记录"
-        message="此操作不可撤销，确认删除？"
-        confirmLabel="确认删除"
-        confirmVariant="danger"
-      />
 
       <ComposeMessageDialog
         open={!!composeFor}
@@ -323,13 +372,12 @@ function UploadZone({
 }
 
 function ReviewBlock({
-  review, showSendButton, onSendToLegal, onDelete, onDownload,
+  review, showSendButton, onSendToLegal, onDownload,
 }: {
   review: ReviewRecord
   mode: Mode
   showSendButton: boolean
   onSendToLegal: () => void
-  onDelete: () => void
   onDownload: () => void
 }) {
   return (
@@ -353,9 +401,6 @@ function ReviewBlock({
               发送给法务审核
             </Button>
           )}
-          <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={onDelete}>
-            删除
-          </Button>
         </div>
       </div>
 
@@ -372,12 +417,11 @@ function ReviewBlock({
 }
 
 function HistoryItem({
-  review, expanded, onToggle, onDelete, onDownload,
+  review, expanded, onToggle, onDownload,
 }: {
   review: ReviewRecord
   expanded: boolean
   onToggle: () => void
-  onDelete: () => void
   onDownload: () => void
 }) {
   return (
@@ -403,9 +447,6 @@ function HistoryItem({
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="sm" icon={<Download size={11} />} onClick={onDownload}>
               原文件
-            </Button>
-            <Button variant="ghost" size="sm" icon={<Trash2 size={11} />} onClick={onDelete}>
-              删除
             </Button>
           </div>
         </div>
