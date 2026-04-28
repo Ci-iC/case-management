@@ -142,10 +142,19 @@ async function extractText(absPath, mimeType, originalName) {
     return (doc.getBody() || '').trim()
   }
   if (ext === '.pdf' || mimeType === 'application/pdf') {
-    const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js')
+    // pdfjs-dist legacy 是 Mozilla 官方维护，比 pdf-parse 内置的老 pdfjs 兼容性好
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const buf = await fs.readFile(absPath)
-    const result = await pdfParse(buf)
-    return (result.text || '').trim()
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise
+    const parts = []
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i)
+      const content = await page.getTextContent()
+      // PDF 里每个 textItem 可能跨多行，str 合并即可
+      parts.push(content.items.map(it => ('str' in it) ? it.str : '').join(' '))
+    }
+    await doc.destroy()
+    return parts.join('\n').trim()
   }
   throw new Error(`暂不支持的文件类型：${ext || mimeType}（仅支持 .pdf/.docx/.doc/.txt）`)
 }
