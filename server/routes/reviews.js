@@ -405,12 +405,20 @@ r.delete('/:id', async (_req, res) => {
 
 // ─── 法务审核版：法务（admin）上传修订稿，业务人员能下载 ──────────────────
 
-// POST /api/reviews/:id/legal-revision —— 仅 admin 上传修订版
+// POST /api/reviews/:id/legal-revision —— 仅 admin 上传修订版（限 Word 文档）
 r.post('/:id/legal-revision', requireAdmin, upload.single('file'), async (req, res, next) => {
   let savedAbsPath = null
   try {
     if (!req.file) return res.status(400).json({ error: '请上传修订版文件' })
     savedAbsPath = req.file.path
+
+    // 法务审核版必须是 Word 文档，方便业务人员后续继续修订
+    const original = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
+    const ext = path.extname(original).toLowerCase()
+    if (ext !== '.doc' && ext !== '.docx') {
+      await safeUnlink(savedAbsPath)
+      return res.status(400).json({ error: '法务审核版必须是 Word 文档（.doc 或 .docx）' })
+    }
 
     const review = await db('case_reviews').where({ id: req.params.id }).first()
     if (!review) {
@@ -423,7 +431,6 @@ r.post('/:id/legal-revision', requireAdmin, upload.single('file'), async (req, r
       await safeUnlink(toAbsolutePath(review.reviewed_storage_path))
     }
 
-    const original = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
     const storagePath = toStoragePath(savedAbsPath)
 
     await db('case_reviews').where({ id: review.id }).update({
