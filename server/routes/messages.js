@@ -12,7 +12,7 @@ import multer from 'multer'
 import path from 'node:path'
 import { db, writeAudit } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
+import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink, copyFile } from '../storage.js'
 import fs from 'node:fs/promises'
 
 const r = Router()
@@ -123,13 +123,20 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
 
       const messageId = inserted.id
 
-      // 把附件从 tmp 搬到 attachments/<message_id>/
+      const attachDir = path.join(ATTACHMENTS_ROOT, messageId)
+      let dirCreated = false
+      async function ensureAttachDir() {
+        if (dirCreated) return
+        await ensureDir(attachDir)
+        dirCreated = true
+      }
+
+      // 1) 用户上传的附件：从 tmp 搬到 attachments/<message_id>/
       if (req.files && req.files.length > 0) {
-        const dir = path.join(ATTACHMENTS_ROOT, messageId)
-        await ensureDir(dir)
+        await ensureAttachDir()
         for (const f of req.files) {
           const original = Buffer.from(f.originalname, 'latin1').toString('utf8')
-          const target = path.join(dir, `${Date.now()}_${safeFilename(original)}`)
+          const target = path.join(attachDir, `${Date.now()}_${safeFilename(original)}`)
           await fs.rename(f.path, target)
           await trx('message_attachments').insert({
             message_id: messageId,
@@ -140,6 +147,28 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
           })
         }
       }
+
+      // 2) 如果是从 review 回传的消息，自动把审核的原文件克隆成附件
+      //    这样法务收到消息后能直接下载原合同，不用再回去找审核记录
+      if (normalizedReviewId) {
+        const rv = await trx('case_reviews')
+          .select('uploaded_filename', 'uploaded_storage_path', 'uploaded_size_bytes', 'uploaded_mime_type')
+          .where({ id: normalizedReviewId })
+          .first()
+        if (rv?.uploaded_storage_path) {
+          await ensureAttachDir()
+          const target = path.join(attachDir, `${Date.now()}_review_${safeFilename(rv.uploaded_filename)}`)
+          await copyFile(toAbsolutePath(rv.uploaded_storage_path), target)
+          await trx('message_attachments').insert({
+            message_id: messageId,
+            filename: rv.uploaded_filename,
+            storage_path: toStoragePath(target),
+            size_bytes: rv.uploaded_size_bytes,
+            mime_type: rv.uploaded_mime_type,
+          })
+        }
+      }
+
       return messageId
     })
 

@@ -67,7 +67,7 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
   }, [open, prefillReview, prefillCaseId, lockReceiver])
 
   function buildPrefillBody(r: ReviewRecord): string {
-    return `麻烦帮忙审核一下「${r.uploadedFilename}」。\n\nAI 已经过了一遍，意见见下方折叠区。我自己想要您再确认的点：\n（请补充）`
+    return `麻烦帮忙审核一下「${r.uploadedFilename}」。\n\nAI 已经过了一遍，意见见下方折叠区。我自己想要你再确认的点：\n（请补充）`
   }
 
   const dialogTitle = isLegalSubmission ? '发送给法务审核' : '发送消息'

@@ -40,8 +40,8 @@ export function Sidebar({ activeNav, onNavChange }: SidebarProps) {
             <Scale size={16} className="text-white" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-slate-900 leading-tight">天弘矿业</p>
-            <p className="text-[11px] text-slate-400 leading-tight">案件台账管理系统</p>
+            <p className="text-sm font-semibold text-slate-900 leading-tight">GlobalX</p>
+            <p className="text-[11px] text-slate-400 leading-tight">法律事务管理系统</p>
           </div>
         </div>
 
