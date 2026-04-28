@@ -42,6 +42,8 @@ export default function ContractReviewPage() {
   const [contractMode, setContractMode] = useState<'new' | 'existing'>('new')
   const [contractName, setContractName] = useState<string>('')
   const [contractId, setContractId] = useState<string>('')
+  const [ourRole, setOurRole] = useState<'' | 'party_a' | 'party_b'>('')
+  const [reviewIntensity, setReviewIntensity] = useState<'strict' | 'medium' | 'lenient'>('medium')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -105,6 +107,8 @@ export default function ContractReviewPage() {
     try {
       const opts: Parameters<typeof reviewsApi.create>[1] = {
         pipelineId: pipelineId || undefined,
+        ourRole: ourRole || undefined,
+        reviewIntensity,
       }
       if (contractMode === 'new') opts.contractName = contractName.trim()
       else opts.contractId = contractId
@@ -232,6 +236,58 @@ export default function ContractReviewPage() {
               {selectedPipeline?.description && (
                 <span className="text-[10px] text-slate-400 italic truncate">{selectedPipeline.description}</span>
               )}
+            </div>
+
+            {/* 我方立场 + 审核幅度 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-600 shrink-0">我方立场：</span>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                {([
+                  { v: '', label: '不指定' },
+                  { v: 'party_a', label: '甲方' },
+                  { v: 'party_b', label: '乙方' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.v}
+                    onClick={() => setOurRole(opt.v as typeof ourRole)}
+                    className={
+                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors ' +
+                      (ourRole === opt.v
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700')
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <span className="ml-3 text-xs text-slate-600 shrink-0">审核幅度：</span>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                {([
+                  { v: 'strict', label: '严格' },
+                  { v: 'medium', label: '中等' },
+                  { v: 'lenient', label: '宽松' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.v}
+                    onClick={() => setReviewIntensity(opt.v)}
+                    className={
+                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors ' +
+                      (reviewIntensity === opt.v
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700')
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-slate-400 italic">
+                {reviewIntensity === 'strict' && '宁严勿松，所有可能风险都标记'}
+                {reviewIntensity === 'medium' && '常规企业法务标准'}
+                {reviewIntensity === 'lenient' && '只标明显的法律 / 商业风险'}
+              </span>
             </div>
 
             <UploadZone

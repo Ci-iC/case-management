@@ -25,6 +25,38 @@ r.use(requireAuth)
 
 const LEVELS = ['重大风险条款', '一般风险条款', '优化完善条款']
 
+// 上传时用户可指定"我方立场"和"审核幅度"，拼成一段附加指令引导 AI
+
+const OUR_ROLE_LABEL = {
+  party_a: '甲方',
+  party_b: '乙方',
+}
+
+const INTENSITY_GUIDE = {
+  strict:
+    '【审核幅度】严格审核：所有可能存在风险或表述不严谨的条款都要标记。即使风险概率较小，' +
+    '只要可能对我方不利就列出。宁严勿松。',
+  medium:
+    '【审核幅度】中等审核：按常规企业法务标准，识别明显的风险条款和需优化的条款。',
+  lenient:
+    '【审核幅度】宽松审核：只标记明显的、严重的法律风险或商业损失条款。' +
+    '次要的表述瑕疵、约定俗成的标准条款不必挑剔。',
+}
+
+function buildContextPrompt({ ourRole, reviewIntensity }) {
+  const lines = []
+  if (ourRole && OUR_ROLE_LABEL[ourRole]) {
+    lines.push(
+      `【我方立场】我方在本合同中的角色是：${OUR_ROLE_LABEL[ourRole]}。` +
+      `请优先识别对我方（${OUR_ROLE_LABEL[ourRole]}）不利的条款、` +
+      `潜在不公平待遇、过度义务，以及对方的免责或权利扩张。`
+    )
+  }
+  const intensityKey = reviewIntensity && INTENSITY_GUIDE[reviewIntensity] ? reviewIntensity : 'medium'
+  lines.push(INTENSITY_GUIDE[intensityKey])
+  return lines.join('\n')
+}
+
 const SCHEMA_INSTRUCTION = `请严格按以下 JSON 格式输出（仅输出合法 JSON 对象，不要 Markdown、不要解释、不要代码块包裹）：
 
 {
@@ -236,11 +268,17 @@ r.post('/', upload.single('file'), async (req, res, next) => {
       throw new Error('文件文字超过 20 万字，请分片审核')
     }
 
+    // 我方立场 + 审核幅度（用户上传时指定，拼到每节点 system 顶部）
+    const contextPrompt = buildContextPrompt({
+      ourRole: req.body?.ourRole,
+      reviewIntensity: req.body?.reviewIntensity,
+    })
+
     // 并行调 AI：每个 step 独立提示词；每节点都强制返回统一的三层级 JSON Schema
     const userMsg = `【文件名】${originalName}\n\n【文件全文】\n${text}`
     const stepResults = await Promise.allSettled(
       steps.map(s => chatCompletion({
-        system: `${s.prompt}\n\n${SCHEMA_INSTRUCTION}`,
+        system: `${contextPrompt}\n\n${s.prompt}\n\n${SCHEMA_INSTRUCTION}`,
         user: userMsg,
         model: req.body?.model,
         responseFormat: 'json_object',

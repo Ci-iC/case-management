@@ -15,6 +15,8 @@ export const reviewsApi = {
   create(file: File, opts?: {
     caseId?: string; model?: string; pipelineId?: string;
     contractId?: string; contractName?: string;
+    ourRole?: 'party_a' | 'party_b' | ''
+    reviewIntensity?: 'strict' | 'medium' | 'lenient'
   }) {
     const form = new FormData()
     form.append('file', file)
@@ -23,6 +25,8 @@ export const reviewsApi = {
     if (opts?.pipelineId) form.append('pipelineId', opts.pipelineId)
     if (opts?.contractId) form.append('contractId', opts.contractId)
     if (opts?.contractName) form.append('contractName', opts.contractName)
+    if (opts?.ourRole) form.append('ourRole', opts.ourRole)
+    if (opts?.reviewIntensity) form.append('reviewIntensity', opts.reviewIntensity)
     return apiFetchForm<{ review: ReviewRecord }>('/api/reviews', form)
   },
 
