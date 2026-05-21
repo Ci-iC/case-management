@@ -11,7 +11,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import path from 'node:path'
 import { db, writeAudit } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, isAdminOrAbove } from '../auth.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
 import fs from 'node:fs/promises'
 
@@ -54,6 +54,9 @@ function rowToMessage(row) {
     caseNumber: row.case_number ?? undefined,
     caseName: row.case_name ?? undefined,
     reviewId: row.review_id,
+    approvalId: row.approval_id || null,
+    // 当条消息引用了 review，且 review 已有法务修订版 → 列表里展示"已修订"徽标
+    hasLegalRevision: !!row.review_legal_path,
     isRead: !!row.is_read,
     readAt: row.read_at instanceof Date ? row.read_at.toISOString() : row.read_at,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
@@ -62,11 +65,13 @@ function rowToMessage(row) {
 }
 
 const MSG_SELECT = [
-  'm.id', 'm.sender_id', 'm.receiver_id', 'm.body', 'm.case_id', 'm.review_id',
+  'm.id', 'm.sender_id', 'm.receiver_id', 'm.body', 'm.case_id', 'm.review_id', 'm.approval_id',
   'm.is_read', 'm.read_at', 'm.created_at',
   's.username as sender_username', 's.display_name as sender_display_name',
   'rcv.username as receiver_username', 'rcv.display_name as receiver_display_name',
   'c.case_number', 'c.case_name',
+  // 引用的 review 有没有法务版（仅看 path 是否存在，前端用 boolean 标徽标）
+  'rv.reviewed_storage_path as review_legal_path',
   db.raw('(SELECT count(*) FROM message_attachments a WHERE a.message_id = m.id) AS attachment_count'),
 ]
 
@@ -76,6 +81,7 @@ function joinMsg(q) {
     .leftJoin('users as s', 'm.sender_id', 's.id')
     .leftJoin('users as rcv', 'm.receiver_id', 'rcv.id')
     .leftJoin('cases as c', 'm.case_id', 'c.id')
+    .leftJoin('case_reviews as rv', 'm.review_id', 'rv.id')
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -95,7 +101,7 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
     // caseId：发送方需要案件权限
     let normalizedCaseId = null
     if (caseId) {
-      if (req.user.role === 'admin' || req.user.canViewCases) {
+      if (isAdminOrAbove(req.user) || req.user.canViewCases) {
         const c = await db('cases').select('id').where({ id: caseId }).first()
         if (c) normalizedCaseId = c.id
       }
@@ -105,7 +111,7 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
     let normalizedReviewId = null
     if (reviewId) {
       const rv = await db('case_reviews').select('id', 'created_by').where({ id: reviewId }).first()
-      if (rv && (req.user.role === 'admin' || rv.created_by === req.user.id)) {
+      if (rv && (isAdminOrAbove(req.user) || rv.created_by === req.user.id)) {
         normalizedReviewId = rv.id
       }
     }
@@ -141,9 +147,9 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
         }
       }
 
-      // 2) 如果是从 review 回传的消息，把审核的原文件作为"引用"附件
+      // 2) 如果是从 review 回传的消息，把审核的原合同作为"引用"附件（kind=original）
       //    不复制物理文件，只在 message_attachments 写一条 review_id 引用 —— 省磁盘
-      //    下载时实时从 case_reviews 拿 storage_path
+      //    下载时实时从 case_reviews.uploaded_storage_path 拿
       if (normalizedReviewId) {
         const rv = await trx('case_reviews')
           .select('uploaded_filename', 'uploaded_storage_path', 'uploaded_size_bytes', 'uploaded_mime_type')
@@ -153,8 +159,9 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
           await trx('message_attachments').insert({
             message_id: messageId,
             review_id: normalizedReviewId,
+            review_file_kind: 'original',
             filename: rv.uploaded_filename,
-            storage_path: null,  // 没有自己的物理文件
+            storage_path: null,
             size_bytes: rv.uploaded_size_bytes,
             mime_type: rv.uploaded_mime_type,
           })
@@ -213,15 +220,20 @@ r.get('/:id', async (req, res, next) => {
     }
 
     const attachments = await db('message_attachments')
-      .select('id', 'filename', 'size_bytes', 'mime_type', 'created_at')
+      .select('id', 'filename', 'size_bytes', 'mime_type', 'created_at', 'review_id', 'review_file_kind')
       .where({ message_id: row.id })
       .orderBy('created_at', 'asc')
 
     let review = null
     if (row.review_id) {
-      const rv = await db('case_reviews')
-        .select('id', 'uploaded_filename', 'review_text', 'model', 'created_at')
-        .where({ id: row.review_id }).first()
+      const rv = await db('case_reviews as r')
+        .leftJoin('users as rv', 'r.reviewed_by', 'rv.id')
+        .select(
+          'r.id', 'r.uploaded_filename', 'r.review_text', 'r.model', 'r.created_at',
+          'r.reviewed_filename', 'r.reviewed_size_bytes', 'r.reviewed_at',
+          'rv.username as reviewed_by_username', 'rv.display_name as reviewed_by_display_name',
+        )
+        .where('r.id', row.review_id).first()
       if (rv) {
         review = {
           id: rv.id,
@@ -229,6 +241,11 @@ r.get('/:id', async (req, res, next) => {
           reviewText: rv.review_text,
           model: rv.model,
           createdAt: rv.created_at instanceof Date ? rv.created_at.toISOString() : rv.created_at,
+          reviewedFilename: rv.reviewed_filename || null,
+          reviewedSizeBytes: rv.reviewed_size_bytes != null ? Number(rv.reviewed_size_bytes) : null,
+          reviewedAt: rv.reviewed_at instanceof Date ? rv.reviewed_at.toISOString() : (rv.reviewed_at || null),
+          reviewedByUsername: rv.reviewed_by_username || null,
+          reviewedByDisplayName: rv.reviewed_by_display_name || null,
         }
       }
     }
@@ -242,6 +259,8 @@ r.get('/:id', async (req, res, next) => {
           sizeBytes: a.size_bytes != null ? Number(a.size_bytes) : null,
           mimeType: a.mime_type,
           createdAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+          reviewId: a.review_id || null,
+          reviewFileKind: a.review_file_kind || null,  // 'original' | 'legal' | null
         })),
         review,
       },
@@ -298,15 +317,20 @@ r.get('/:id/attachments/:aid', async (req, res, next) => {
       return res.status(403).json({ error: '无权下载该附件' })
     }
     const a = await db('message_attachments')
-      .select('filename', 'storage_path', 'mime_type', 'review_id')
+      .select('filename', 'storage_path', 'mime_type', 'review_id', 'review_file_kind')
       .where({ id: req.params.aid, message_id: m.id })
       .first()
     if (!a) return res.status(404).json({ error: '附件不存在' })
 
     let resolvedPath = a.storage_path
     if (!resolvedPath && a.review_id) {
-      const rv = await db('case_reviews').select('uploaded_storage_path').where({ id: a.review_id }).first()
-      resolvedPath = rv?.uploaded_storage_path || null
+      const rv = await db('case_reviews')
+        .select('uploaded_storage_path', 'reviewed_storage_path')
+        .where({ id: a.review_id }).first()
+      // kind = 'legal' 走法务版；'original' 或缺省走原合同
+      resolvedPath = a.review_file_kind === 'legal'
+        ? (rv?.reviewed_storage_path || null)
+        : (rv?.uploaded_storage_path || null)
     }
     if (!resolvedPath) {
       return res.status(404).json({ error: '原文件已被删除（关联的审核记录已清除）' })

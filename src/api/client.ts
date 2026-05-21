@@ -1,7 +1,8 @@
 // Low-level fetch wrapper: auto-attaches Bearer token, parses JSON, surfaces API errors uniformly.
 
 let currentToken: string | null = null
-let onUnauthorized: (() => void) | null = null
+/** 401 处理：第二参数 sessionRevoked=true 表示账号在其他设备登录被踢，需要弹提示 */
+let onUnauthorized: ((sessionRevoked?: boolean) => void) | null = null
 
 export function setAuthToken(token: string | null) {
   currentToken = token
@@ -21,9 +22,14 @@ export async function apiFetchForm<T = unknown>(
   const headers = getAuthHeader()
   const resp = await fetch(path, { method: 'POST', ...init, headers, body: form })
   if (resp.status === 401) {
-    onUnauthorized?.()
     let msg = '登录已过期，请重新登录'
-    try { msg = (await resp.json())?.error || msg } catch { /* ignore */ }
+    let sessionRevoked = false
+    try {
+      const body = await resp.json() as { error?: string; sessionRevoked?: boolean }
+      msg = body?.error || msg
+      sessionRevoked = !!body?.sessionRevoked
+    } catch { /* ignore */ }
+    onUnauthorized?.(sessionRevoked)
     throw new ApiError(msg, 401)
   }
   if (!resp.ok) {
@@ -52,7 +58,7 @@ export async function downloadFile(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url)
 }
 
-export function setUnauthorizedHandler(fn: () => void) {
+export function setUnauthorizedHandler(fn: (sessionRevoked?: boolean) => void) {
   onUnauthorized = fn
 }
 
@@ -77,9 +83,14 @@ export async function apiFetch<T = unknown>(
   const resp = await fetch(path, { ...init, headers })
 
   if (resp.status === 401) {
-    onUnauthorized?.()
     let msg = '登录已过期，请重新登录'
-    try { msg = (await resp.json())?.error || msg } catch { /* ignore */ }
+    let sessionRevoked = false
+    try {
+      const body = await resp.json() as { error?: string; sessionRevoked?: boolean }
+      msg = body?.error || msg
+      sessionRevoked = !!body?.sessionRevoked
+    } catch { /* ignore */ }
+    onUnauthorized?.(sessionRevoked)
     throw new ApiError(msg, 401)
   }
 

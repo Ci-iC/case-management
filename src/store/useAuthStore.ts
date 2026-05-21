@@ -9,21 +9,29 @@ interface AuthState {
   user: AuthUser | null
   status: 'idle' | 'loading' | 'authed' | 'guest'
   error: string | null
+  /** v1.2: 被其他设备登录顶下来时显示的提示文案；用户关闭后清空 */
+  sessionRevokedMessage: string | null
 
   login: (username: string, password: string) => Promise<void>
   logout: () => void
   /** On app mount: if we have a persisted token, verify it with the server. */
   bootstrap: () => Promise<void>
+  /** 关闭"账号被顶下"提示 */
+  clearSessionRevoked: () => void
 }
+
+const SESSION_REVOKED_MESSAGE =
+  '您的账号已在其他设备登录，本设备已自动退出。如果不是您本人操作，请立即修改密码。'
 
 export const useAuthStore = create<AuthState>()(persist((set, get) => ({
   token: null,
   user: null,
   status: 'idle',
   error: null,
+  sessionRevokedMessage: null,
 
   async login(username, password) {
-    set({ status: 'loading', error: null })
+    set({ status: 'loading', error: null, sessionRevokedMessage: null })
     try {
       const { token, user } = await authApi.login(username, password)
       setAuthToken(token)
@@ -58,12 +66,21 @@ export const useAuthStore = create<AuthState>()(persist((set, get) => ({
       set({ token: null, user: null, status: 'guest' })
     }
   },
+
+  clearSessionRevoked() {
+    set({ sessionRevokedMessage: null })
+  },
 }), {
   name: 'case-management-auth',
   partialize: (s) => ({ token: s.token, user: s.user }),
 }))
 
 // Wire 401 → logout (runs once at module load)
-setUnauthorizedHandler(() => {
-  useAuthStore.getState().logout()
+// 如果是被其他设备登录顶下（sessionRevoked=true），登出时附带提示文案给 UI 显示
+setUnauthorizedHandler((sessionRevoked) => {
+  const store = useAuthStore.getState()
+  store.logout()
+  if (sessionRevoked) {
+    useAuthStore.setState({ sessionRevokedMessage: SESSION_REVOKED_MESSAGE })
+  }
 })

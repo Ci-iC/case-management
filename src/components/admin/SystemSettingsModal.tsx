@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, AlertCircle, CheckCircle2, Plug, Eye, EyeOff, Workflow } from 'lucide-react'
+import { Save, AlertCircle, CheckCircle2, Plug, Eye, EyeOff, Workflow, FileText } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { settingsApi } from '@/api/settings'
@@ -12,6 +12,7 @@ interface Props {
 const OPENAI_API_KEY = 'openai_api_key'
 const OPENAI_BASE_URL = 'openai_base_url'
 const OPENAI_MODEL = 'openai_model_default'
+const CONTRACT_SUMMARY_PROMPT = 'contract_summary_prompt'
 
 interface OpenAIForm {
   apiKey: string
@@ -33,6 +34,11 @@ export function SystemSettingsModal({ open, onClose }: Props) {
   })
   const [originalOpenai, setOriginalOpenai] = useState<OpenAIForm | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
+
+  // v1.3 合同审批 AI 摘要的 prompt
+  const [summaryPrompt, setSummaryPrompt] = useState('')
+  const [originalSummaryPrompt, setOriginalSummaryPrompt] = useState('')
+  const [savingSummary, setSavingSummary] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -56,10 +62,27 @@ export function SystemSettingsModal({ open, onClose }: Props) {
       }
       setOpenai(ai)
       setOriginalOpenai(ai)
+      const sp = m[CONTRACT_SUMMARY_PROMPT]?.value || ''
+      setSummaryPrompt(sp)
+      setOriginalSummaryPrompt(sp)
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function saveSummaryPrompt() {
+    setSavingSummary(true)
+    setError(null)
+    try {
+      await settingsApi.update(CONTRACT_SUMMARY_PROMPT, summaryPrompt)
+      setFlash('合同摘要 prompt 已保存，下次发起审批生成摘要时生效')
+      setOriginalSummaryPrompt(summaryPrompt)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+    } finally {
+      setSavingSummary(false)
     }
   }
 
@@ -223,6 +246,37 @@ export function SystemSettingsModal({ open, onClose }: Props) {
             AI 审核提示词已升级为「审核模型」管理 —— 一个模型由多个并行节点组成，每个节点有独立提示词。
             到侧栏「<span className="text-slate-700 font-medium">审核模型</span>」编辑。
           </p>
+        </section>
+
+        {/* v1.3 合同审批 AI 摘要 prompt */}
+        <section className="space-y-2 rounded-lg border border-slate-200 p-4">
+          <div className="flex items-center gap-2">
+            <FileText size={14} className="text-primary-600" />
+            <h4 className="text-sm font-semibold text-slate-800">合同审批 - AI 摘要 Prompt</h4>
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            发起审批时调用 OpenAI 生成合同摘要的 system prompt。改完保存即时生效（下次发起审批时使用）。
+          </p>
+          <textarea
+            className="form-textarea font-mono text-xs"
+            rows={8}
+            value={summaryPrompt}
+            disabled={loading}
+            onChange={(e) => setSummaryPrompt(e.target.value)}
+            placeholder="请输入合同摘要 system prompt"
+          />
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              size="md"
+              icon={<Save size={14} />}
+              loading={savingSummary}
+              disabled={summaryPrompt === originalSummaryPrompt}
+              onClick={saveSummaryPrompt}
+            >
+              保存 Prompt
+            </Button>
+          </div>
         </section>
 
         <div className="flex justify-end pt-2 border-t border-slate-100">

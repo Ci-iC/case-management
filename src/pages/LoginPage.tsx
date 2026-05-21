@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Scale, LogIn, AlertCircle } from 'lucide-react'
+import { Scale, LogIn, AlertCircle, AlertTriangle } from 'lucide-react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { Button } from '@/components/ui/Button'
 
 export function LoginPage() {
-  const { login, status, error } = useAuthStore()
+  const { login, status, error, sessionRevokedMessage, clearSessionRevoked } = useAuthStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -30,13 +30,29 @@ export function LoginPage() {
             <Scale size={20} className="text-white" />
           </div>
           <div>
-            <p className="text-base font-semibold text-slate-900 leading-tight">天弘矿业</p>
-            <p className="text-xs text-slate-400 leading-tight mt-0.5">案件台账管理系统</p>
+            <p className="text-base font-semibold text-slate-900 leading-tight">GlobalX</p>
+            <p className="text-xs text-slate-400 leading-tight mt-0.5">法律事务管理系统</p>
           </div>
         </div>
 
         <h2 className="mb-1 text-lg font-semibold text-slate-900">欢迎登录</h2>
         <p className="mb-5 text-xs text-slate-500">请使用管理员分配的账号登录</p>
+
+        {sessionRevokedMessage && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="leading-relaxed">{sessionRevokedMessage}</p>
+              <button
+                type="button"
+                onClick={clearSessionRevoked}
+                className="mt-1 text-[11px] text-amber-700 underline hover:text-amber-900"
+              >
+                我知道了
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

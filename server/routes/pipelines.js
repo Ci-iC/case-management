@@ -5,7 +5,7 @@
 
 import { Router } from 'express'
 import { db, writeAudit } from '../db.js'
-import { requireAuth, requireAdmin } from '../auth.js'
+import { requireAuth, requireSuperAdmin } from '../auth.js'
 
 const r = Router()
 r.use(requireAuth)
@@ -73,7 +73,7 @@ r.get('/:id', async (req, res, next) => {
 // ─── Write (admin only) ──────────────────────────────────────────────────────
 
 // POST /api/pipelines — 新建（可一并提交 steps）
-r.post('/', requireAdmin, async (req, res, next) => {
+r.post('/', requireSuperAdmin, async (req, res, next) => {
   try {
     const { name, description, isDefault, steps } = req.body || {}
     if (!name || !String(name).trim()) return res.status(400).json({ error: '请填写审核模型名称' })
@@ -102,7 +102,7 @@ r.post('/', requireAdmin, async (req, res, next) => {
 })
 
 // PUT /api/pipelines/:id — 改 name / description / isDefault / steps（一次性提交全部 steps）
-r.put('/:id', requireAdmin, async (req, res, next) => {
+r.put('/:id', requireSuperAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
     const existing = await db('pipelines').where({ id }).first()
@@ -149,7 +149,7 @@ r.put('/:id', requireAdmin, async (req, res, next) => {
 })
 
 // DELETE /api/pipelines/:id — 不能删唯一一条 / 不能删 is_default
-r.delete('/:id', requireAdmin, async (req, res, next) => {
+r.delete('/:id', requireSuperAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
     const existing = await db('pipelines').where({ id }).first()

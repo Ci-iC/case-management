@@ -12,7 +12,6 @@ echo.
 :: Find npm - check common Node.js installation paths
 where npm >nul 2>&1
 if %errorlevel% neq 0 (
-    :: Try common install locations
     if exist "%ProgramFiles%\nodejs\npm.cmd" (
         set "PATH=%ProgramFiles%\nodejs;%APPDATA%\npm;%PATH%"
     ) else if exist "%ProgramFiles(x86)%\nodejs\npm.cmd" (
@@ -28,9 +27,9 @@ if %errorlevel% neq 0 (
     )
 )
 
-:: Install dependencies on first run
+:: Step 1/3 - Install dependencies on first run
 if not exist "node_modules" (
-    echo  Step 1/2  Installing dependencies, please wait...
+    echo  Step 1/3  Installing dependencies, please wait...
     echo.
     call npm install --registry=https://registry.npmmirror.com
     if errorlevel 1 (
@@ -43,9 +42,53 @@ if not exist "node_modules" (
     echo.
     echo  Done.
     echo.
+) else (
+    echo  Step 1/3  Dependencies already installed, skipped.
+    echo.
 )
 
-echo  Step 2/2  Starting dev server...
+:: Step 2/3 - Ensure PostgreSQL is up and database schema is current
+::            All three commands below are idempotent: safe to run on every start.
+echo  Step 2/3  Preparing database...
+echo.
+
+:: 2a) Start PostgreSQL container (no-op if already running)
+call npm run db:up
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] Failed to start PostgreSQL.
+    echo  Please make sure Docker Desktop is running.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: 2b) Wait for PostgreSQL to accept connections
+node scripts/wait-pg.js
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] PostgreSQL did not become ready in time.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: 2c) Apply pending migrations (already-applied ones are skipped)
+call npm run db:migrate
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] Database migration failed.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo  Database is ready.
+echo.
+
+:: Step 3/3 - Start dev server
+echo  Step 3/3  Starting dev server...
 echo.
 echo  URL  :  http://localhost:5173
 echo  Stop :  Close this window

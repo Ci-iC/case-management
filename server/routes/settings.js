@@ -2,10 +2,11 @@
 
 import { Router } from 'express'
 import { db, writeAudit } from '../db.js'
-import { requireAuth, requireAdmin } from '../auth.js'
+import { requireAuth, requireSuperAdmin } from '../auth.js'
 
 const r = Router()
-r.use(requireAuth, requireAdmin)
+// v1.2：系统设置（OpenAI Key 等）属于系统级配置，仅超级管理员可读写
+r.use(requireAuth, requireSuperAdmin)
 
 // 白名单：哪些 key 允许通过这个 API 改
 // 注：review_prompt 在 v1.1 后由"审核模型"取代，不再通过系统设置编辑
@@ -13,6 +14,8 @@ const ALLOWED_KEYS = new Set([
   'openai_api_key',
   'openai_base_url',
   'openai_model_default',
+  // v1.3：合同审批界面 AI 摘要的 system prompt（超管可调）
+  'contract_summary_prompt',
 ])
 
 // 敏感字段：GET 时返回 mask；PUT 时如果还是 mask 则不更新

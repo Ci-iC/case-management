@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import { Send, X, Paperclip, FileText, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { messagesApi } from '@/api/messages'
+import { reviewsApi } from '@/api/reviews'
+import { contractsApi } from '@/api/contracts'
 import { useCaseStore } from '@/store/useCaseStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { isAdminOrAbove } from '@/api/auth'
 import { ApiError } from '@/api/client'
-import type { Contact, ReviewRecord } from '@/types'
+import type { Contact, ReviewRecord, ContractRecord } from '@/types'
 
 interface Props {
   open: boolean
@@ -27,14 +30,25 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const cases = useCaseStore(s => s.cases)
-  const myRole = useAuthStore(s => s.user?.role)
-  const canViewCases = useAuthStore(s => !!s.user?.canViewCases) || myRole === 'admin'
-  const isAdmin = myRole === 'admin'
+  // v1.2：发送给法务时选合同
+  const [contractMode, setContractMode] = useState<'new' | 'existing'>('new')
+  const [contractName, setContractName] = useState<string>('')
+  const [contractId, setContractId] = useState<string>('')
+  const [contracts, setContracts] = useState<ContractRecord[]>([])
 
-  // admin 才能选收件人；普通用户固定发给法务（第一个 admin）
-  // 合同审核「发送给法务审核」即使是 admin 也固定流向（产品决策：消息流向只有"业务人员 → 法务"）
-  const lockReceiver = !!prefillReview || !isAdmin
+  const cases = useCaseStore(s => s.cases)
+  const me = useAuthStore(s => s.user)
+  const isAdminish = isAdminOrAbove(me)
+  const canViewCases = !!me?.canViewCases || isAdminish
+
+  // 收件人锁定策略（lockReceiver）：
+  //   - 合同审核「发送给法务审核」（prefillReview 非空时）→ 不管你是谁，都锁定到 superadmin
+  //   - 普通发消息时：
+  //       · admin / superadmin（isAdminish=true）→ 可自由选收件人
+  //       · 普通 user → 收件人固定（业务方→法务方向，对应消息中心不让普通用户随便发给同事）
+  // v1.3.2 起：法务严格等于 superadmin。admin 是高管/业务方，但发普通消息这条路径保持
+  //   "admin 可自由选收件人" 不变（admin 作为高管偶尔需要联系除法务外的其他人）。
+  const lockReceiver = !!prefillReview || !isAdminish
   const isLegalSubmission = !!prefillReview
 
   // 重置 + 加载联系人
@@ -44,18 +58,23 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
     setBody(prefillReview ? buildPrefillBody(prefillReview) : '')
     setCaseId(prefillCaseId || prefillReview?.caseId || '')
     setAttachments([])
+    setContractMode('new')
+    setContractName('')
+    setContractId('')
+    setContracts([])
 
     messagesApi.contacts()
       .then(({ contacts }) => {
         setContacts(contacts)
         if (lockReceiver) {
-          // 普通用户 / 法务回传：自动选第一个 admin
-          const firstAdmin = contacts.find(c => c.role === 'admin')
-          if (firstAdmin) {
-            setReceiverId(firstAdmin.id)
-            setReceiverLabel(firstAdmin.displayName || firstAdmin.username)
+          // v1.3.2: 法务严格等于 superadmin。admin 是高管/业务方角色，不再回退到 admin
+          // 系统保证至少有一个 superadmin（用户管理接口不允许删最后一个），所以下面通常能命中
+          const firstLegal = contacts.find(c => c.role === 'superadmin')
+          if (firstLegal) {
+            setReceiverId(firstLegal.id)
+            setReceiverLabel(firstLegal.displayName || firstLegal.username)
           } else {
-            setError('系统中没有可用的法务/管理员账号')
+            setError('系统中没有可用的法务（超级管理员）账号，请联系系统管理员')
           }
         } else {
           // admin 可选收件人，默认空
@@ -64,6 +83,13 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
         }
       })
       .catch(e => setError(e instanceof Error ? e.message : '加载联系人失败'))
+
+    // 仅"发送给法务审核"模式下加载已有未审批合同
+    if (prefillReview) {
+      contractsApi.list({ onlyUnapproved: true })
+        .then(({ contracts }) => setContracts(contracts))
+        .catch(e => console.error('加载已有合同失败', e))
+    }
   }, [open, prefillReview, prefillCaseId, lockReceiver])
 
   function buildPrefillBody(r: ReviewRecord): string {
@@ -89,16 +115,38 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
     }
     if (!body.trim()) { setError('请填写留言'); return }
 
+    // v1.2：发送给法务审核时强制选合同
+    if (isLegalSubmission) {
+      if (contractMode === 'new' && !contractName.trim()) {
+        setError('请填写合同名称（系统会自动分配编号）')
+        return
+      }
+      if (contractMode === 'existing' && !contractId) {
+        setError('请选择已有合同，或切换到"新合同"')
+        return
+      }
+    }
+
     setSubmitting(true)
     setError(null)
     try {
-      await messagesApi.send({
-        receiverId,
-        body: body.trim(),
-        caseId: caseId || undefined,
-        reviewId: prefillReview?.id,
-        attachments,
-      })
+      if (isLegalSubmission && prefillReview) {
+        await reviewsApi.submitToLegal(prefillReview.id, {
+          contractMode,
+          contractName: contractMode === 'new' ? contractName.trim() : undefined,
+          contractId: contractMode === 'existing' ? contractId : undefined,
+          receiverId,
+          body: body.trim(),
+          attachments,
+        })
+      } else {
+        await messagesApi.send({
+          receiverId,
+          body: body.trim(),
+          caseId: caseId || undefined,
+          attachments,
+        })
+      }
       onSent?.()
       onClose()
     } catch (e) {
@@ -131,6 +179,66 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {/* v1.2：发送给法务审核时选合同 */}
+          {isLegalSubmission && (
+            <Field label="合同" required>
+              <div className="space-y-2">
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5 w-fit">
+                  {(['new', 'existing'] as const).map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setContractMode(m)}
+                      className={
+                        'rounded px-3 py-1 text-xs font-medium transition-colors ' +
+                        (contractMode === m
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700')
+                      }
+                    >
+                      {m === 'new' ? '新合同' : '已有合同（追加新版本）'}
+                    </button>
+                  ))}
+                </div>
+
+                {contractMode === 'new' ? (
+                  <>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={contractName}
+                      onChange={e => setContractName(e.target.value)}
+                      placeholder='给这份合同起个名字，如"采购合同 - 某供应商"'
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      提交后系统自动分配编号 <span className="font-mono">YYYY-HT-NNNN</span>（按当年序号递增）
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <select
+                      className="form-select"
+                      value={contractId}
+                      onChange={e => setContractId(e.target.value)}
+                    >
+                      <option value="">选择已有合同…</option>
+                      {contracts.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.code} · {c.name}（已审 {c.versionCount} 次）
+                        </option>
+                      ))}
+                    </select>
+                    {contracts.length === 0 && (
+                      <p className="text-[11px] text-amber-600">
+                        当前没有可关联的合同（已发起审批的合同不可再追加版本）。请切换到"新合同"。
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </Field>
+          )}
+
           {/* 收件人 */}
           <Field label="收件人">
             {lockReceiver ? (
@@ -147,7 +255,8 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
                 <option value="">请选择…</option>
                 {contacts.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.displayName || c.username}（{c.username}）{c.role === 'admin' ? ' · 管理员' : ''}
+                    {c.displayName || c.username}（{c.username}）
+                    {c.role === 'superadmin' ? ' · 超级管理员' : c.role === 'admin' ? ' · 管理员' : ''}
                   </option>
                 ))}
               </select>

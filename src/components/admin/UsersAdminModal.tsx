@@ -1,16 +1,35 @@
 import { useEffect, useState } from 'react'
-import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, User as UserIcon, Briefcase, FolderOpen } from 'lucide-react'
+import { UserPlus, Trash2, KeyRound, AlertCircle, CheckCircle2, Shield, ShieldCheck, User as UserIcon, Briefcase, FolderOpen, Pencil } from 'lucide-react'
 import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { usersApi } from '@/api/users'
 import { useAuthStore } from '@/store/useAuthStore'
-import type { AuthUser } from '@/api/auth'
+import type { AuthUser, UserRole } from '@/api/auth'
+import { isAdminOrAbove, isSuperAdmin } from '@/api/auth'
 import { formatDate } from '@/utils/helpers'
 import { cn } from '@/utils/helpers'
 
 interface Props {
   open: boolean
   onClose: () => void
+}
+
+function roleLabel(role: UserRole | string): string {
+  if (role === 'superadmin') return '超级管理员'
+  if (role === 'admin') return '管理员'
+  return '普通用户'
+}
+
+function roleBadgeClass(role: UserRole | string): string {
+  if (role === 'superadmin') return 'bg-rose-100 text-rose-700'
+  if (role === 'admin') return 'bg-amber-100 text-amber-700'
+  return 'bg-slate-100 text-slate-500'
+}
+
+function RoleIcon({ role }: { role: UserRole | string }) {
+  if (role === 'superadmin') return <ShieldCheck size={14} />
+  if (role === 'admin') return <Shield size={14} />
+  return <UserIcon size={14} />
 }
 
 export function UsersAdminModal({ open, onClose }: Props) {
@@ -25,13 +44,15 @@ export function UsersAdminModal({ open, onClose }: Props) {
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newDisplayName, setNewDisplayName] = useState('')
-  const [newRole, setNewRole] = useState<'admin' | 'user'>('user')
+  const [newRole, setNewRole] = useState<UserRole>('user')
   const [newCanViewCases, setNewCanViewCases] = useState(false)
   const [newCanViewContracts, setNewCanViewContracts] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<AuthUser | null>(null)
   const [resetTarget, setResetTarget] = useState<AuthUser | null>(null)
   const [resetPw, setResetPw] = useState('')
+  const [renameTarget, setRenameTarget] = useState<AuthUser | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   async function refresh() {
     setLoading(true)
@@ -72,13 +93,14 @@ export function UsersAdminModal({ open, onClose }: Props) {
     }
     setError(null)
     try {
+      const isAdminish = newRole === 'admin' || newRole === 'superadmin'
       await usersApi.create({
         username: newUsername.trim(),
         password: newPassword,
         role: newRole,
         displayName: newDisplayName.trim() || undefined,
-        canViewCases: newRole === 'admin' ? true : newCanViewCases,
-        canViewContracts: newRole === 'admin' ? true : newCanViewContracts,
+        canViewCases: isAdminish ? true : newCanViewCases,
+        canViewContracts: isAdminish ? true : newCanViewContracts,
       })
       resetCreateForm()
       setShowCreate(false)
@@ -90,7 +112,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
   }
 
   async function toggleCaseAccess(u: AuthUser) {
-    if (u.role === 'admin') return  // admin 不能关
+    if (isAdminOrAbove(u)) return  // admin / superadmin 默认有权限，不可关
     const next = !u.canViewCases
     try {
       await usersApi.setCaseAccess(u.id, next)
@@ -102,7 +124,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
   }
 
   async function toggleContractAccess(u: AuthUser) {
-    if (u.role === 'admin') return
+    if (isAdminOrAbove(u)) return
     const next = !u.canViewContracts
     try {
       await usersApi.setContractAccess(u.id, next)
@@ -126,6 +148,21 @@ export function UsersAdminModal({ open, onClose }: Props) {
     }
   }
 
+  async function handleRename() {
+    if (!renameTarget) return
+    const v = renameValue.trim()
+    if (v.length > 64) { setError('昵称最多 64 个字符'); return }
+    try {
+      await usersApi.setDisplayName(renameTarget.id, v)
+      setUsers(prev => prev.map(x => x.id === renameTarget.id ? { ...x, displayName: v || undefined } : x))
+      setFlash(`已更新「${renameTarget.username}」的昵称`)
+      setRenameTarget(null)
+      setRenameValue('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   async function handleResetPassword() {
     if (!resetTarget) return
     if (!resetPw || resetPw.length < 6) {
@@ -141,6 +178,8 @@ export function UsersAdminModal({ open, onClose }: Props) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
+
+  const newRoleIsAdminish = newRole === 'admin' || newRole === 'superadmin'
 
   return (
     <>
@@ -210,15 +249,16 @@ export function UsersAdminModal({ open, onClose }: Props) {
                   <label className="mb-1 block text-xs font-medium text-slate-600">角色</label>
                   <select
                     value={newRole}
-                    onChange={(e) => setNewRole(e.target.value as 'admin' | 'user')}
+                    onChange={(e) => setNewRole(e.target.value as UserRole)}
                     className="form-select"
                   >
-                    <option value="user">普通用户</option>
-                    <option value="admin">管理员</option>
+                    <option value="user">普通用户（按权限开关访问）</option>
+                    <option value="admin">管理员（看全部台账 + 法务工作）</option>
+                    <option value="superadmin">超级管理员（系统配置 + 用户管理）</option>
                   </select>
                 </div>
               </div>
-              {newRole !== 'admin' && (
+              {!newRoleIsAdminish && (
                 <div className="space-y-1.5">
                   <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
                     <input
@@ -265,13 +305,16 @@ export function UsersAdminModal({ open, onClose }: Props) {
               {users.length === 0 && !loading ? (
                 <div className="py-10 text-center text-sm text-slate-400">暂无账号</div>
               ) : (
-                users.map((u) => (
+                users.map((u) => {
+                  const adminish = isAdminOrAbove(u)
+                  const isSuper = isSuperAdmin(u)
+                  return (
                   <div key={u.id} className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-slate-50">
                     <div className={cn(
                       'flex h-8 w-8 items-center justify-center rounded-full shrink-0',
-                      u.role === 'admin' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500',
+                      roleBadgeClass(u.role),
                     )}>
-                      {u.role === 'admin' ? <Shield size={14} /> : <UserIcon size={14} />}
+                      <RoleIcon role={u.role} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -282,13 +325,13 @@ export function UsersAdminModal({ open, onClose }: Props) {
                         )}
                       </div>
                       <p className="text-[11px] text-slate-400">
-                        {u.role === 'admin' ? '管理员' : '普通用户'} · 创建于 {formatDate(u.createdAt)}
+                        {roleLabel(u.role)} · 创建于 {formatDate(u.createdAt)}
                       </p>
                     </div>
                     <button
                       className={cn(
                         'p-1.5 rounded transition-colors',
-                        u.role === 'admin'
+                        adminish
                           ? 'text-amber-500 cursor-default'
                           : u.canViewCases
                             ? 'text-emerald-600 hover:bg-emerald-50'
@@ -296,20 +339,20 @@ export function UsersAdminModal({ open, onClose }: Props) {
                       )}
                       onClick={() => toggleCaseAccess(u)}
                       title={
-                        u.role === 'admin'
-                          ? '管理员默认有案件权限'
+                        adminish
+                          ? `${roleLabel(u.role)}默认有案件权限`
                           : u.canViewCases
                             ? '点击关闭案件管理权限'
                             : '点击开放案件管理权限'
                       }
-                      disabled={u.role === 'admin'}
+                      disabled={adminish}
                     >
                       <Briefcase size={14} />
                     </button>
                     <button
                       className={cn(
                         'p-1.5 rounded transition-colors',
-                        u.role === 'admin'
+                        adminish
                           ? 'text-amber-500 cursor-default'
                           : u.canViewContracts
                             ? 'text-emerald-600 hover:bg-emerald-50'
@@ -317,33 +360,47 @@ export function UsersAdminModal({ open, onClose }: Props) {
                       )}
                       onClick={() => toggleContractAccess(u)}
                       title={
-                        u.role === 'admin'
-                          ? '管理员默认有合同台账权限'
+                        adminish
+                          ? `${roleLabel(u.role)}默认有合同台账权限`
                           : u.canViewContracts
                             ? '点击关闭合同台账权限'
                             : '点击开放合同台账权限'
                       }
-                      disabled={u.role === 'admin'}
+                      disabled={adminish}
                     >
                       <FolderOpen size={14} />
                     </button>
                     <button
                       className="p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                      onClick={() => { setRenameTarget(u); setRenameValue(u.displayName || '') }}
+                      title="改昵称"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      className="p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                       onClick={() => { setResetTarget(u); setResetPw('') }}
-                      title="重置密码"
+                      title="重置密码（重置后该用户在所有设备会被强制登出）"
                     >
                       <KeyRound size={14} />
                     </button>
                     <button
                       className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
-                      disabled={u.id === currentUser?.id}
+                      disabled={u.id === currentUser?.id || (isSuper && users.filter(x => x.role === 'superadmin').length <= 1)}
                       onClick={() => setDeleteTarget(u)}
-                      title={u.id === currentUser?.id ? '不能删除自己' : '删除账号'}
+                      title={
+                        u.id === currentUser?.id
+                          ? '不能删除自己'
+                          : isSuper && users.filter(x => x.role === 'superadmin').length <= 1
+                            ? '系统至少保留一个超级管理员'
+                            : '删除账号'
+                      }
                     >
                       <Trash2 size={14} />
                     </button>
                   </div>
-                ))
+                  )
+                })
               )}
             </div>
           </div>
@@ -367,6 +424,35 @@ export function UsersAdminModal({ open, onClose }: Props) {
         }
       />
 
+      {/* Rename modal */}
+      <Modal
+        open={!!renameTarget}
+        onClose={() => { setRenameTarget(null); setRenameValue('') }}
+        title={`修改「${renameTarget?.username || ''}」的昵称`}
+      >
+        <div className="w-[360px] space-y-3">
+          <label className="block text-xs font-medium text-slate-600">昵称（留空清除）</label>
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            className="form-input"
+            placeholder="例如：Wells / 张律师"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') handleRename() }}
+          />
+          <p className="text-[11px] text-slate-400">最多 64 个字符</p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" size="md" onClick={() => { setRenameTarget(null); setRenameValue('') }}>
+              取消
+            </Button>
+            <Button variant="primary" size="md" onClick={handleRename}>
+              保存
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Reset password modal */}
       <Modal
         open={!!resetTarget}
@@ -383,6 +469,7 @@ export function UsersAdminModal({ open, onClose }: Props) {
             placeholder="至少 6 位"
             autoFocus
           />
+          <p className="text-[11px] text-slate-400">重置后该用户当前已登录的所有设备会被强制登出。</p>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" size="md" onClick={() => { setResetTarget(null); setResetPw('') }}>
               取消

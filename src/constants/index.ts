@@ -123,8 +123,24 @@ export const DEFAULT_FILTERS = {
 
 export const NAV_ITEMS = [
   { id: 'reviews',   label: '合同审核', icon: 'FileSearch',  path: '/reviews' },
+  { id: 'approvals', label: '合同审批', icon: 'CheckSquare', path: '/approvals' },
   { id: 'contracts', label: '合同台账', icon: 'FolderOpen',  path: '/contracts', requiresContractAccess: true },
   { id: 'cases',     label: '案件台账', icon: 'Briefcase',   path: '/',          requiresCaseAccess: true },
   { id: 'calendar',  label: '节点日历', icon: 'Calendar',    path: '/calendar',  soon: true },
   { id: 'stats',     label: '数据统计', icon: 'BarChart2',   path: '/stats',     soon: true },
 ]
+
+/** v1.3 合同状态显示文案 + 配色（badge） */
+export const CONTRACT_STATUS_LABELS = {
+  drafting:     '起草中',
+  approving:    '审批中',
+  pending_seal: '待签署',
+  sealed:       '已签署',
+} as const
+
+export const CONTRACT_STATUS_BADGE = {
+  drafting:     'bg-slate-100 text-slate-700 border-slate-200',
+  approving:    'bg-blue-50 text-blue-700 border-blue-200',
+  pending_seal: 'bg-amber-50 text-amber-700 border-amber-200',
+  sealed:       'bg-emerald-50 text-emerald-700 border-emerald-200',
+} as const

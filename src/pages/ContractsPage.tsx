@@ -1,26 +1,39 @@
 import { useEffect, useState } from 'react'
 import {
   FolderOpen, FileText, Sparkles, Download, Search, ChevronRight, ArrowLeft,
-  RefreshCw, Calendar, User as UserIcon,
+  RefreshCw, Calendar, User as UserIcon, FileCheck, ChevronDown, ChevronUp, CheckSquare,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { contractsApi } from '@/api/contracts'
 import { reviewsApi } from '@/api/reviews'
+import { downloadSealedContract } from '@/api/approvals'
 import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
 import { ApiError } from '@/api/client'
 import { cn } from '@/utils/helpers'
-import type { ContractRecord, ContractReviewVersion } from '@/types'
+import { CONTRACT_STATUS_BADGE, CONTRACT_STATUS_LABELS } from '@/constants'
+import type { ContractRecord, ContractReviewVersion, ContractStatus } from '@/types'
 
-export default function ContractsPage() {
+type StatusFilter = 'all' | ContractStatus
+
+interface ContractsPageProps {
+  /** 跳转到审批详情（由 AppLayout 提供，跨页面切换） */
+  onJumpToApproval?: (approvalId: string) => void
+}
+
+export default function ContractsPage({ onJumpToApproval }: ContractsPageProps = {}) {
   const [contracts, setContracts] = useState<ContractRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ContractRecord | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [expandedReviewId, setExpandedReviewId] = useState<string | null>(null)
+  // v1.3.1 详情页两个折叠区
+  const [revisionsOpen, setRevisionsOpen] = useState(false)
+  const [approvalOpen, setApprovalOpen] = useState(false)
 
   async function loadList() {
     setLoading(true)
@@ -42,10 +55,8 @@ export default function ContractsPage() {
     try {
       const { contract } = await contractsApi.get(id)
       setDetail(contract)
-      // 默认展开最新版本
-      if (contract.reviews && contract.reviews.length > 0) {
-        setExpandedReviewId(contract.reviews[contract.reviews.length - 1].id)
-      }
+      // v1.3.1: 不默认展开任何版本，让用户点击 v1/v2 自己选择展开
+      setExpandedReviewId(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载详情失败')
     } finally {
@@ -55,12 +66,24 @@ export default function ContractsPage() {
 
   useEffect(() => { loadList() }, [])
 
-  const filtered = keyword.trim()
-    ? contracts.filter(c =>
-        c.name.toLowerCase().includes(keyword.trim().toLowerCase()) ||
-        (c.description || '').toLowerCase().includes(keyword.trim().toLowerCase())
-      )
-    : contracts
+  const filtered = contracts.filter(c => {
+    if (statusFilter !== 'all' && c.status !== statusFilter) return false
+    if (keyword.trim()) {
+      const k = keyword.trim().toLowerCase()
+      return c.name.toLowerCase().includes(k) ||
+        (c.code || '').toLowerCase().includes(k) ||
+        (c.description || '').toLowerCase().includes(k)
+    }
+    return true
+  })
+
+  const counts = {
+    all:           contracts.length,
+    drafting:      contracts.filter(c => c.status === 'drafting').length,
+    approving:     contracts.filter(c => c.status === 'approving').length,
+    pending_seal:  contracts.filter(c => c.status === 'pending_seal').length,
+    sealed:        contracts.filter(c => c.status === 'sealed').length,
+  }
 
   // 详情视图
   if (selectedId && (detail || detailLoading)) {
@@ -72,16 +95,40 @@ export default function ContractsPage() {
           </button>
           <FolderOpen size={18} className="text-primary-600" />
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-slate-900 truncate">
-              {detail?.name || '加载中…'}
+            <h1 className="text-base font-semibold text-slate-900 truncate flex items-center gap-2">
+              {detail?.code && (
+                <span className="font-mono text-primary-700 bg-primary-50 px-2 py-0.5 rounded text-sm shrink-0">
+                  {detail.code}
+                </span>
+              )}
+              {detail && (
+                <span className={cn(
+                  'rounded-full px-2 py-0.5 text-[10px] font-medium border shrink-0',
+                  CONTRACT_STATUS_BADGE[detail.status],
+                )}>
+                  {CONTRACT_STATUS_LABELS[detail.status]}
+                </span>
+              )}
+              <span className="truncate">{detail?.name || '加载中…'}</span>
             </h1>
             {detail && (
               <p className="text-[11px] text-slate-400">
                 共 {detail.versionCount} 次审核 · 创建人 {detail.createdByDisplayName || detail.createdByUsername || '—'}
                 {detail.lastReviewedAt && ` · 上次审核 ${new Date(detail.lastReviewedAt).toLocaleString('zh-CN')}`}
+                {detail.sealedAt && ` · 已签署 ${new Date(detail.sealedAt).toLocaleDateString('zh-CN')}`}
               </p>
             )}
           </div>
+          {detail?.sealedFilename && (
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<FileCheck size={12} />}
+              onClick={() => downloadSealedContract(detail.id, detail.sealedFilename!)}
+            >
+              下载用印版
+            </Button>
+          )}
         </header>
 
         {detail?.description && (
@@ -90,20 +137,118 @@ export default function ContractsPage() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
-          {detailLoading && <p className="text-center text-xs text-slate-400 py-6">加载中…</p>}
-          {detail && detail.reviews && detail.reviews.length === 0 && (
-            <p className="text-center text-xs text-slate-400 py-6">该合同还没有审核版本</p>
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 max-w-4xl mx-auto w-full">
+          {detailLoading && <p className="text-center text-sm text-slate-400 py-6">加载中…</p>}
+
+          {/* AI 合同摘要 */}
+          {detail && (
+            <section className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={14} className="text-amber-600" />
+                <p className="text-sm font-semibold text-amber-800">AI 合同摘要</p>
+                {detail.summaryGeneratedAt && (
+                  <span className="text-[11px] text-amber-600/70">
+                    · 生成于 {new Date(detail.summaryGeneratedAt).toLocaleString('zh-CN')}
+                  </span>
+                )}
+              </div>
+              {detail.summary ? (
+                <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 font-sans">
+                  {detail.summary}
+                </pre>
+              ) : (
+                <p className="text-sm text-amber-700/80 italic">
+                  本合同尚未生成 AI 摘要（在合同发起审批时会自动生成）
+                </p>
+              )}
+            </section>
           )}
-          {detail?.reviews?.map(rv => (
-            <VersionCard
-              key={rv.id}
-              review={rv}
-              total={detail.reviews?.length || 0}
-              expanded={expandedReviewId === rv.id}
-              onToggle={() => setExpandedReviewId(expandedReviewId === rv.id ? null : rv.id)}
-            />
-          ))}
+
+          {/* 折叠区 1：修订过程 */}
+          {detail && (
+            <section className="rounded-lg border border-slate-200 bg-white">
+              <button
+                onClick={() => setRevisionsOpen(!revisionsOpen)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
+              >
+                <div className="flex items-center gap-2">
+                  <FileText size={16} className="text-slate-400" />
+                  <span className="text-sm font-medium text-slate-700">修订过程</span>
+                  <span className="text-xs text-slate-400">{detail.reviews?.length || 0} 版</span>
+                </div>
+                {revisionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+              {revisionsOpen && (
+                <div className="border-t border-slate-100 px-4 py-3 space-y-3">
+                  {detail.reviews && detail.reviews.length === 0 && (
+                    <p className="text-sm text-slate-400 text-center py-4">该合同还没有审核版本</p>
+                  )}
+                  {detail.reviews?.map(rv => (
+                    <VersionCard
+                      key={rv.id}
+                      review={rv}
+                      total={detail.reviews?.length || 0}
+                      expanded={expandedReviewId === rv.id}
+                      onToggle={() => setExpandedReviewId(expandedReviewId === rv.id ? null : rv.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 折叠区 2：审批及用印版 */}
+          {detail && (
+            <section className="rounded-lg border border-slate-200 bg-white">
+              <button
+                onClick={() => setApprovalOpen(!approvalOpen)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
+              >
+                <div className="flex items-center gap-2">
+                  <CheckSquare size={16} className="text-slate-400" />
+                  <span className="text-sm font-medium text-slate-700">审批及用印版</span>
+                  {detail.status === 'approving' && (
+                    <span className="text-[10px] rounded bg-blue-100 text-blue-700 px-1.5 py-0.5">审批中</span>
+                  )}
+                  {detail.status === 'pending_seal' && (
+                    <span className="text-[10px] rounded bg-amber-100 text-amber-700 px-1.5 py-0.5">待签署</span>
+                  )}
+                  {detail.status === 'sealed' && (
+                    <span className="text-[10px] rounded bg-emerald-100 text-emerald-700 px-1.5 py-0.5">已签署</span>
+                  )}
+                </div>
+                {approvalOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+              {approvalOpen && (
+                <div className="border-t border-slate-100 px-4 py-4 space-y-3">
+                  {!detail.latestApprovalId ? (
+                    <p className="text-sm text-slate-400 text-center py-4">该合同还没有发起过审批</p>
+                  ) : (
+                    <>
+                      <Button
+                        variant="primary"
+                        size="md"
+                        icon={<ChevronRight size={14} />}
+                        onClick={() => onJumpToApproval?.(detail.latestApprovalId!)}
+                      >
+                        查看审批详情（含审批流水、操作记录、AI 摘要）
+                      </Button>
+                    </>
+                  )}
+                  {detail.sealedFilename && (
+                    <Button
+                      variant="outline"
+                      size="md"
+                      icon={<FileCheck size={14} />}
+                      onClick={() => downloadSealedContract(detail.id, detail.sealedFilename!)}
+                    >
+                      下载用印版（{detail.sealedFilename}）
+                    </Button>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       </div>
     )
@@ -134,6 +279,36 @@ export default function ContractsPage() {
           </Button>
         </div>
       </header>
+
+      {/* 状态筛选 tabs */}
+      <div className="flex border-b border-slate-200 bg-white px-4 overflow-x-auto">
+        {([
+          { v: 'all',          label: '全部' },
+          { v: 'drafting',     label: CONTRACT_STATUS_LABELS.drafting },
+          { v: 'approving',    label: CONTRACT_STATUS_LABELS.approving },
+          { v: 'pending_seal', label: CONTRACT_STATUS_LABELS.pending_seal },
+          { v: 'sealed',       label: CONTRACT_STATUS_LABELS.sealed },
+        ] as { v: StatusFilter; label: string }[]).map(t => (
+          <button
+            key={t.v}
+            onClick={() => setStatusFilter(t.v)}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px shrink-0',
+              statusFilter === t.v
+                ? 'text-primary-700 border-primary-600'
+                : 'text-slate-500 border-transparent hover:text-slate-700',
+            )}
+          >
+            {t.label}
+            <span className={cn(
+              'rounded px-1.5 py-0.5 text-[10px]',
+              statusFilter === t.v ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500',
+            )}>
+              {counts[t.v]}
+            </span>
+          </button>
+        ))}
+      </div>
 
       {error && (
         <div className="mx-6 mt-3 rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
@@ -167,10 +342,19 @@ export default function ContractsPage() {
             >
               <div className="flex items-start justify-between gap-2 mb-2">
                 <FolderOpen size={16} className="text-primary-500 mt-0.5 shrink-0" />
-                <span className="rounded-full bg-primary-50 text-primary-700 px-2 py-0.5 text-[10px] font-medium">
-                  v{c.versionCount}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-medium border',
+                    CONTRACT_STATUS_BADGE[c.status],
+                  )}>
+                    {CONTRACT_STATUS_LABELS[c.status]}
+                  </span>
+                  <span className="rounded-full bg-primary-50 text-primary-700 px-2 py-0.5 text-[10px] font-medium">
+                    v{c.versionCount}
+                  </span>
+                </div>
               </div>
+              <p className="font-mono text-[11px] text-primary-700 mb-1">{c.code}</p>
               <p className="text-sm font-semibold text-slate-800 mb-1 line-clamp-2">{c.name}</p>
               {c.description && (
                 <p className="text-[11px] text-slate-500 line-clamp-2 mb-2">{c.description}</p>

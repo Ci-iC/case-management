@@ -171,6 +171,12 @@ export interface CaseComment {
 export interface ReviewRecord {
   id: string
   caseId: string | null
+  /** v1.2: 关联合同（草稿态时为 null，submit 后才有值） */
+  contractId: string | null
+  /** v1.2: 草稿态。AI 审核完未发法务前为 true；submit 后转 false */
+  isDraft: boolean
+  /** v1.3.1: 法务点过"无需修订直接通过"。和 reviewedFilename 共同代表"已经过法务" */
+  legalApproved: boolean
   uploadedFilename: string
   uploadedSizeBytes: number | null
   uploadedMimeType: string | null
@@ -198,6 +204,10 @@ export interface MessageAttachment {
   sizeBytes: number | null
   mimeType: string | null
   createdAt: string
+  /** 引用的审核记录 id（普通自传附件为 null） */
+  reviewId?: string | null
+  /** 'original' = 引用合同原版；'legal' = 引用法务修订版；null = 不是 review 引用 */
+  reviewFileKind?: 'original' | 'legal' | null
 }
 
 export interface MessageRecord {
@@ -213,6 +223,10 @@ export interface MessageRecord {
   caseNumber?: string
   caseName?: string
   reviewId: string | null
+  /** v1.3.1: 关联的审批 id（系统审批通知带 approval_id，前端识别后给"跳转到审批"按钮） */
+  approvalId: string | null
+  /** 当条消息引用 review，且 review 已有法务修订版 → 列表加"已修订"徽标 */
+  hasLegalRevision?: boolean
   isRead: boolean
   readAt?: string | null
   createdAt: string
@@ -225,6 +239,11 @@ export interface MessageRecord {
     reviewText: string
     model: string | null
     createdAt: string
+    reviewedFilename: string | null
+    reviewedSizeBytes: number | null
+    reviewedAt: string | null
+    reviewedByUsername: string | null
+    reviewedByDisplayName: string | null
   } | null
 }
 
@@ -234,24 +253,144 @@ export interface Contact {
   id: string
   username: string
   displayName?: string | null
-  role: 'admin' | 'user'
+  /** v1.2 起含 superadmin */
+  role: 'superadmin' | 'admin' | 'user'
 }
 
 // ─── M6: 合同台账 ─────────────────────────────────────────────────────────────
 
+/** v1.3 合同生命周期状态机 */
+export type ContractStatus = 'drafting' | 'approving' | 'pending_seal' | 'sealed'
+
 export interface ContractRecord {
   id: string
+  /** v1.2: 系统自动生成的合同编号，YYYY-HT-NNNN，全局唯一 */
+  code: string
   name: string
   description: string | null
+  /** v1.3: 合同生命周期 */
+  status: ContractStatus
+  /** v1.3: 当前活跃审批的 id（status=approving / pending_seal 时非空） */
+  approvalId: string | null
+  /** v1.3: AI 合同摘要（双方主体 / 标的 / 金额 / 期限） */
+  summary: string | null
+  summaryGeneratedAt: string | null
+  /** v1.3: 用印版（sealed 状态时非空） */
+  sealedFilename: string | null
+  sealedSizeBytes: number | null
+  sealedMimeType: string | null
+  sealedAt: string | null
+  sealedBy: string | null
+  /** v1.3.1: 清洁版（发起审批时上传，审批界面优先显示） */
+  cleanFilename: string | null
+  cleanSizeBytes: number | null
+  cleanMimeType: string | null
+  cleanUploadedAt: string | null
+  cleanUploadedBy: string | null
   createdBy: string | null
   createdByUsername?: string
   createdByDisplayName?: string
   createdAt: string
   updatedAt: string
+  /** v1.2: 进入审批流程的时间（NULL = 还未审批，可在"已有合同"下拉中选） */
+  approvalStartedAt: string | null
   versionCount: number
   lastReviewedAt: string | null
-  /** 详情时附带 */
+  /** 详情时附带：reviews 列表 */
   reviews?: ContractReviewVersion[]
+  /** v1.3.1 详情时附带：合同最近一条 approval id（已完成 / 已驳回 / 进行中都行），用于"跳转到审批"按钮 */
+  latestApprovalId?: string | null
+}
+
+// ─── v1.3: 合同审批 ────────────────────────────────────────────────────────
+
+export type ApprovalStatus = 'pending' | 'completed' | 'rejected'
+export type ApprovalStepStatus = 'pending' | 'approved' | 'rejected' | 'skipped'
+export type ApprovalStepType = 'approver' | 'consultee' | 'final-initiator'
+export type ApprovalActionType =
+  | 'submit'
+  | 'approve'
+  | 'reject_to_step'
+  | 'reject_to_start'
+  | 'add_consultee'
+  | 'submit_consultation'
+  | 'resubmit'
+  | 'upload_seal'
+
+export interface ApprovalRecord {
+  id: string
+  contractId: string
+  contractCode?: string
+  contractName?: string
+  contractStatus?: ContractStatus
+  initiatorId: string
+  initiatorUsername?: string
+  initiatorDisplayName?: string
+  status: ApprovalStatus
+  initiationNote: string | null
+  currentStepId: string | null
+  currentAssigneeId: string | null
+  currentAssigneeUsername?: string | null
+  currentAssigneeDisplayName?: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  rejectedAt: string | null
+}
+
+export interface ApprovalStep {
+  id: string
+  approvalId: string
+  stepIndex: number | null
+  parentStepId: string | null
+  stepType: ApprovalStepType
+  assigneeId: string
+  assigneeUsername?: string
+  assigneeDisplayName?: string
+  status: ApprovalStepStatus
+  comment: string | null
+  actionedAt: string | null
+  createdAt: string
+}
+
+export interface ApprovalActionRecord {
+  id: string
+  approvalId: string
+  stepId: string | null
+  actorId: string
+  actorUsername?: string
+  actorDisplayName?: string
+  action: ApprovalActionType
+  comment: string | null
+  targetStepId: string | null
+  payload: Record<string, unknown> | null
+  createdAt: string
+}
+
+/** GET /api/approvals/:id 详情返回结构 */
+export interface ApprovalDetail {
+  approval: ApprovalRecord
+  steps: ApprovalStep[]
+  actions: ApprovalActionRecord[]
+  contract: {
+    id: string
+    code: string
+    name: string
+    status: ContractStatus
+    summary: string | null
+    summaryGeneratedAt: string | null
+    cleanFilename: string | null
+    cleanUploadedAt: string | null
+    sealedFilename: string | null
+    sealedAt: string | null
+  }
+  reviews: Array<{
+    id: string
+    uploadedFilename: string
+    reviewedFilename: string | null
+    createdAt: string
+    reviewedAt: string | null
+  }>
 }
 
 export interface ContractReviewVersion {

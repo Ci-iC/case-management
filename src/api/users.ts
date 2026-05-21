@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { AuthUser } from './auth'
+import type { AuthUser, UserRole } from './auth'
 
 export const usersApi = {
   list() {
@@ -8,12 +8,26 @@ export const usersApi = {
 
   create(data: {
     username: string; password: string;
-    role: 'admin' | 'user'; displayName?: string;
+    role: UserRole; displayName?: string;
     canViewCases?: boolean; canViewContracts?: boolean;
   }) {
     return apiFetch<{ user: AuthUser }>('/api/users', {
       method: 'POST',
       body: JSON.stringify(data),
+    })
+  },
+
+  setRole(id: string, role: UserRole) {
+    return apiFetch<{ user: AuthUser }>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    })
+  },
+
+  setDisplayName(id: string, displayName: string) {
+    return apiFetch<{ user: AuthUser }>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName }),
     })
   },
 

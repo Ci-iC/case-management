@@ -2,7 +2,7 @@ import 'dotenv/config'
 
 const config = {
   client: 'pg',
-  connection: process.env.DATABASE_URL || 'postgres://case_mgmt:changeme@127.0.0.1:5432/case_mgmt',
+  connection: process.env.DATABASE_URL || (() => { throw new Error('DATABASE_URL 未设置，请在 .env 中配置') })(),
   migrations: {
     directory: './server/migrations',
     extension: 'js',

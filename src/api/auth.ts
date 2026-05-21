@@ -1,14 +1,26 @@
 import { apiFetch } from './client'
 
+export type UserRole = 'superadmin' | 'admin' | 'user'
+
 export interface AuthUser {
   id: string
   username: string
-  role: 'admin' | 'user'
+  role: UserRole
   displayName?: string
   canViewCases?: boolean
   canViewContracts?: boolean
   createdAt: string
   createdBy?: string
+}
+
+/** 是否管理员或以上（admin / superadmin），用于看全部台账、做法务工作 */
+export function isAdminOrAbove(user: { role?: UserRole | string } | null | undefined): boolean {
+  return user?.role === 'admin' || user?.role === 'superadmin'
+}
+
+/** 是否超级管理员（系统设置 / 用户管理 / 审核模型管理） */
+export function isSuperAdmin(user: { role?: UserRole | string } | null | undefined): boolean {
+  return user?.role === 'superadmin'
 }
 
 export const authApi = {

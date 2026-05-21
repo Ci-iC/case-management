@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mail, Send, Inbox, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus, Upload, CheckCircle2 } from 'lucide-react'
+import { Mail, Send, Inbox, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus, Upload, CheckCircle2, CheckSquare } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { Button } from '@/components/ui/Button'
 import { ConfirmModal } from '@/components/ui/Modal'
@@ -7,13 +7,19 @@ import { messagesApi } from '@/api/messages'
 import { reviewsApi } from '@/api/reviews'
 import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
+import { isSuperAdmin } from '@/api/auth'
 import type { MessageRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
 
 type Folder = 'inbox' | 'sent'
 
-export default function MessagesPage() {
+interface MessagesPageProps {
+  /** 点击审批通知里的"跳转到审批"按钮 */
+  onJumpToApproval?: (approvalId: string) => void
+}
+
+export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {}) {
   const me = useAuthStore(s => s.user)
   const [folder, setFolder] = useState<Folder>('inbox')
   const [list, setList] = useState<MessageRecord[]>([])
@@ -138,10 +144,10 @@ export default function MessagesPage() {
           {selected ? (
             <MessageDetailView
               message={selected}
-              isAdmin={me?.role === 'admin'}
+              canLegalReply={isSuperAdmin(me)}
               onDelete={() => setDeleteId(selected.id)}
+              onJumpToApproval={onJumpToApproval}
               onLegalRevisionUploaded={async () => {
-                // 重新拉详情让 review 区域刷新（保留选中态）
                 if (selected) {
                   try {
                     const { message } = await messagesApi.get(selected.id)
@@ -225,6 +231,11 @@ function MessageListItem({
             <Sparkles size={9} /> 审核
           </span>
         )}
+        {message.hasLegalRevision && (
+          <span className="flex items-center gap-0.5 text-emerald-600 font-medium">
+            <CheckCircle2 size={9} /> 已修订
+          </span>
+        )}
         {message.caseId && (
           <span className="flex items-center gap-0.5">
             <Briefcase size={9} /> 案件
@@ -237,18 +248,24 @@ function MessageListItem({
 
 // ─── Detail View ──────────────────────────────────────────────────────────────
 
+// canLegalReply: 当前用户能否在这条消息上做"法务答复"动作（上传修订版 / 直接通过）。
+// v1.3.2 起严格等价于 isSuperAdmin —— admin 是高管/业务方，不再做法务工作（原 prop 名 isAdmin
+// 沿用自 v1.3，因为那时 admin = 法务；本版改名以避免后续读代码误解）。
 function MessageDetailView({
-  message, isAdmin, onDelete, onLegalRevisionUploaded,
+  message, canLegalReply, onDelete, onLegalRevisionUploaded, onJumpToApproval,
 }: {
   message: MessageRecord
-  isAdmin: boolean
+  canLegalReply: boolean
   onDelete: () => void
   onLegalRevisionUploaded: () => void
+  onJumpToApproval?: (approvalId: string) => void
 }) {
   const [reviewExpanded, setReviewExpanded] = useState(false)
   const [uploadingLegal, setUploadingLegal] = useState(false)
+  const [approving, setApproving] = useState(false)
   const [uploadFlash, setUploadFlash] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [legalComment, setLegalComment] = useState('')
   const legalFileRef = useRef<HTMLInputElement>(null)
 
   async function onPickLegalFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -265,13 +282,33 @@ function MessageDetailView({
     setUploadError(null)
     setUploadFlash(null)
     try {
-      await reviewsApi.uploadLegalRevision(message.reviewId, f)
-      setUploadFlash(`已上传法务审核版「${f.name}」，业务人员可在合同台账下载`)
+      await reviewsApi.uploadLegalRevision(message.reviewId, f, legalComment.trim() || undefined)
+      setUploadFlash(`已上传法务审核版「${f.name}」，已自动发站内信通知业务人员`)
+      setLegalComment('')
       onLegalRevisionUploaded()
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : '上传失败')
     } finally {
       setUploadingLegal(false)
+      setTimeout(() => setUploadFlash(null), 4000)
+    }
+  }
+
+  async function onLegalApprove() {
+    if (!message.reviewId) return
+    if (!window.confirm('确认无需修订意见，让业务方直接用当前版本发起合同审批？')) return
+    setApproving(true)
+    setUploadError(null)
+    setUploadFlash(null)
+    try {
+      await reviewsApi.legalApprove(message.reviewId, legalComment.trim() || undefined)
+      setUploadFlash('已标记"无需修订直接通过"，业务方可直接发起合同审批')
+      setLegalComment('')
+      onLegalRevisionUploaded()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setApproving(false)
       setTimeout(() => setUploadFlash(null), 4000)
     }
   }
@@ -340,25 +377,60 @@ function MessageDetailView({
           </div>
         )}
 
-        {/* 法务上传审核版（仅 admin、且消息有 review 引用） */}
-        {isAdmin && message.reviewId && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <Upload size={14} className="mt-0.5 text-emerald-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800">上传法务审核版</p>
-                <p className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
-                  请上传 Word（.doc / .docx 格式）文档。重复上传会覆盖旧的。
+        {/* 法务答复区（v1.3.2 起：仅 superadmin，且消息有 review 引用） */}
+        {canLegalReply && message.reviewId && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-4 py-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-slate-800">法务答复</p>
+              {message.review?.reviewedFilename && (
+                <p className="mt-1 text-[11px] text-emerald-700 leading-relaxed">
+                  <CheckCircle2 size={11} className="inline mr-1" />
+                  已上传修订版《{message.review.reviewedFilename}》
+                  {message.review.reviewedAt && (
+                    <span className="text-slate-500"> · {new Date(message.review.reviewedAt).toLocaleString('zh-CN')}</span>
+                  )}
+                  <span className="block mt-0.5 text-slate-500">如需更新，重新上传会覆盖旧版本并再次自动通知业务人员。</span>
                 </p>
-              </div>
+              )}
+              {!message.review?.reviewedFilename && (
+                <p className="mt-1 text-[11px] text-slate-500 leading-relaxed">
+                  上传 Word 修订稿、或点"无需修订直接通过"。两者都会自动发站内信通知业务人员。
+                </p>
+              )}
+            </div>
+
+            {/* 留言（修订版和直接通过都用）*/}
+            <div>
+              <label className="mb-1 block text-[11px] text-slate-500">留言（可选，会拼进给业务方的通知消息）</label>
+              <textarea
+                className="form-textarea text-sm"
+                rows={2}
+                value={legalComment}
+                onChange={e => setLegalComment(e.target.value)}
+                placeholder="例如：付款节奏建议改为先 50% 再 50%；其他无问题，可发起审批"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant="primary"
                 size="sm"
                 icon={<Upload size={11} />}
                 loading={uploadingLegal}
+                disabled={approving}
                 onClick={() => legalFileRef.current?.click()}
               >
-                上传 Word 修订稿
+                {message.review?.reviewedFilename ? '重新上传修订稿' : '上传 Word 修订稿'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<CheckCircle2 size={11} />}
+                loading={approving}
+                disabled={uploadingLegal}
+                onClick={onLegalApprove}
+              >
+                无需修订，直接通过
               </Button>
               <input
                 ref={legalFileRef}
@@ -368,44 +440,120 @@ function MessageDetailView({
                 onChange={onPickLegalFile}
               />
             </div>
+
             {uploadFlash && (
-              <p className="mt-2 flex items-center gap-1 text-xs text-emerald-700">
+              <p className="flex items-center gap-1 text-xs text-emerald-700">
                 <CheckCircle2 size={12} /> {uploadFlash}
               </p>
             )}
             {uploadError && (
-              <p className="mt-2 text-xs text-red-700">{uploadError}</p>
+              <p className="text-xs text-red-700">{uploadError}</p>
             )}
           </div>
         )}
 
-        {/* 附件 */}
-        {message.attachments && message.attachments.length > 0 && (
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
-              附件（{message.attachments.length}）
-            </p>
-            <ul className="space-y-1.5">
-              {message.attachments.map(a => (
-                <li key={a.id} className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
-                  <FileText size={14} className="text-slate-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-700 truncate">{a.filename}</p>
-                    <p className="text-[10px] text-slate-400">{a.sizeBytes != null ? `${(a.sizeBytes / 1024).toFixed(1)} KB` : ''}</p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    icon={<Download size={11} />}
-                    onClick={() => messagesApi.downloadAttachment(message.id, a.id, a.filename)}
-                  >
-                    下载
-                  </Button>
-                </li>
-              ))}
-            </ul>
+        {/* 系统审批通知 → 跳转到审批详情按钮 */}
+        {message.approvalId && (
+          <div className="rounded-lg border border-primary-200 bg-primary-50/40 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <CheckSquare size={16} className="text-primary-600 shrink-0" />
+              <p className="flex-1 text-sm text-slate-700">这是一条审批流转通知，点击右侧按钮跳转到审批详情</p>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onJumpToApproval?.(message.approvalId!)}
+              >
+                跳转到审批
+              </Button>
+            </div>
           </div>
         )}
+
+        {/* 附件分两组：合同（来自 review 引用）+ 其他附件 */}
+        {(() => {
+          const all = message.attachments || []
+          if (all.length === 0) return null
+          const contractAtts = all.filter(a => a.reviewFileKind)
+          const otherAtts = all.filter(a => !a.reviewFileKind)
+          return (
+            <>
+              {contractAtts.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                    合同文件（{contractAtts.length}）
+                  </p>
+                  <ul className="space-y-1.5">
+                    {contractAtts.map(a => {
+                      const isLegal = a.reviewFileKind === 'legal'
+                      return (
+                        <li
+                          key={a.id}
+                          className={cn(
+                            'flex items-center gap-2 rounded border px-3 py-2',
+                            isLegal ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40',
+                          )}
+                        >
+                          <FileText size={14} className={cn('shrink-0', isLegal ? 'text-emerald-600' : 'text-amber-600')} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  'text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0',
+                                  isLegal ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
+                                )}
+                              >
+                                {isLegal ? '法务审核版' : '原合同'}
+                              </span>
+                              <p className="text-sm text-slate-700 truncate">{a.filename}</p>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {a.sizeBytes != null ? `${(a.sizeBytes / 1024).toFixed(1)} KB` : ''}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            icon={<Download size={11} />}
+                            onClick={() => messagesApi.downloadAttachment(message.id, a.id, a.filename)}
+                          >
+                            下载
+                          </Button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {otherAtts.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                    其他附件（{otherAtts.length}）
+                  </p>
+                  <ul className="space-y-1.5">
+                    {otherAtts.map(a => (
+                      <li key={a.id} className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                        <FileText size={14} className="text-slate-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-700 truncate">{a.filename}</p>
+                          <p className="text-[10px] text-slate-400">{a.sizeBytes != null ? `${(a.sizeBytes / 1024).toFixed(1)} KB` : ''}</p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          icon={<Download size={11} />}
+                          onClick={() => messagesApi.downloadAttachment(message.id, a.id, a.filename)}
+                        >
+                          下载
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )
+        })()}
       </div>
     </>
   )

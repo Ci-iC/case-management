@@ -8,7 +8,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 680,
-    title: '天弘矿业 案件台账管理系统',
+    title: 'GlobalX 法律事务管理系统',
     // 如需自定义图标，取消下行注释并放置 build/icon.ico
     // icon: path.join(__dirname, '../build/icon.ico'),
     webPreferences: {
