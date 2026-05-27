@@ -110,14 +110,17 @@ export function caseToRow(data) {
 export const CASE_DB_COLUMNS = CASE_FIELDS.map(([col]) => col)
 
 // ─── Audit log helper ──────────────────────────────────────────────────────────
+// v2.0: 增加 companyId 字段。平台级操作（建公司、改 superadmin）可传 null。
+//       业务层调用时务必传入 req.user.currentCompanyId（avoid silent NULL）。
 
-export async function writeAudit({ actorId, action, targetType, targetId, payload }) {
+export async function writeAudit({ actorId, action, targetType, targetId, payload, companyId }) {
   await db('audit_logs').insert({
     actor_id: actorId || null,
     action,
     target_type: targetType || null,
     target_id: targetId || null,
     payload: payload ?? null,    // pg driver auto-stringifies for JSONB
+    company_id: companyId || null,
     created_at: new Date(),
   })
 }

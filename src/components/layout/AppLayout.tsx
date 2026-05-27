@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Sidebar } from './Sidebar'
+import { CompanySwitcher } from './CompanySwitcher'
 import { useAuthStore } from '@/store/useAuthStore'
-import { isAdminOrAbove } from '@/api/auth'
+import { canSeeCases, canSeeAllContracts } from '@/api/auth'
 import CasesPage from '@/pages/CasesPage'
 import ContractReviewPage from '@/pages/ContractReviewPage'
 import ContractsPage from '@/pages/ContractsPage'
@@ -10,16 +11,12 @@ import ApprovalsPage from '@/pages/ApprovalsPage'
 
 export default function AppLayout() {
   const user = useAuthStore(s => s.user)
-  const isAdmin = isAdminOrAbove(user)
-  const canViewCases = isAdmin || !!user?.canViewCases
+  const viewCases = canSeeCases(user)
+  const viewContracts = canSeeAllContracts(user) || !!(user?.companyRoles?.length)
 
-  // 默认导航：有案件权限 → cases；否则 → reviews
-  const [activeNav, setActiveNav] = useState<string>(canViewCases ? 'cases' : 'reviews')
+  const [activeNav, setActiveNav] = useState<string>(viewCases ? 'cases' : 'reviews')
   const [messagesOpen, setMessagesOpen] = useState(false)
-  // 从消息中心跳转到某个审批详情时的"待打开 id"，ApprovalsPage 自己消费后清空
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null)
-
-  const canViewContracts = isAdmin || !!user?.canViewContracts
 
   function navigateToApproval(approvalId: string) {
     setMessagesOpen(false)
@@ -30,9 +27,9 @@ export default function AppLayout() {
   function showPage() {
     if (messagesOpen) return <MessagesPage onJumpToApproval={navigateToApproval} />
     switch (activeNav) {
-      case 'cases': return canViewCases ? <CasesPage /> : <ContractReviewPage />
+      case 'cases': return viewCases ? <CasesPage /> : <ContractReviewPage />
       case 'reviews': return <ContractReviewPage />
-      case 'contracts': return canViewContracts
+      case 'contracts': return viewContracts
         ? <ContractsPage onJumpToApproval={navigateToApproval} />
         : <ContractReviewPage />
       case 'approvals': return (
@@ -54,8 +51,16 @@ export default function AppLayout() {
         onToggleMessages={() => setMessagesOpen(!messagesOpen)}
       />
 
-      {/* Main */}
       <main className="flex flex-1 flex-col overflow-hidden">
+        {/* v2.0: 顶部公司切换器（普通用户 + 多公司用户才显示出意义） */}
+        <div className="flex items-center justify-between px-6 py-2 border-b border-slate-100 bg-white">
+          <CompanySwitcher />
+          {user?.isAllCompaniesView && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded">
+              当前为"全部公司"汇总视图，仅支持查看；如需操作请切换到具体公司
+            </p>
+          )}
+        </div>
         {showPage()}
       </main>
     </div>

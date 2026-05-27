@@ -126,8 +126,6 @@ export const NAV_ITEMS = [
   { id: 'approvals', label: '合同审批', icon: 'CheckSquare', path: '/approvals' },
   { id: 'contracts', label: '合同台账', icon: 'FolderOpen',  path: '/contracts', requiresContractAccess: true },
   { id: 'cases',     label: '案件台账', icon: 'Briefcase',   path: '/',          requiresCaseAccess: true },
-  { id: 'calendar',  label: '节点日历', icon: 'Calendar',    path: '/calendar',  soon: true },
-  { id: 'stats',     label: '数据统计', icon: 'BarChart2',   path: '/stats',     soon: true },
 ]
 
 /** v1.3 合同状态显示文案 + 配色（badge） */

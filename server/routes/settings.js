@@ -2,11 +2,11 @@
 
 import { Router } from 'express'
 import { db, writeAudit } from '../db.js'
-import { requireAuth, requireSuperAdmin } from '../auth.js'
+import { requireAuth, requirePlatformAdmin } from '../auth.js'
 
 const r = Router()
-// v1.2：系统设置（OpenAI Key 等）属于系统级配置，仅超级管理员可读写
-r.use(requireAuth, requireSuperAdmin)
+// v2.0: 系统设置（OpenAI Key、合同摘要 prompt 等）是平台级配置，仅平台超管可读写
+r.use(requireAuth, requirePlatformAdmin)
 
 // 白名单：哪些 key 允许通过这个 API 改
 // 注：review_prompt 在 v1.1 后由"审核模型"取代，不再通过系统设置编辑

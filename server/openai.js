@@ -19,8 +19,9 @@ async function getOpenAIConfig() {
 }
 
 /** 调 chat/completions，返回 message.content 字符串
- *  responseFormat:'json_object' 时强制模型返回合法 JSON */
-export async function chatCompletion({ system, user, model, responseFormat }) {
+ *  responseFormat:'json_object' 时强制模型返回合法 JSON
+ *  temperature: 抽取类任务传 0 取确定性输出；不传则用模型默认值 */
+export async function chatCompletion({ system, user, model, responseFormat, temperature }) {
   const cfg = await getOpenAIConfig()
   if (!cfg.apiKey || cfg.apiKey === 'sk-replace-me') {
     throw new Error('未配置 OpenAI API Key（admin 请到「系统设置 → OpenAI 连接」填写）')
@@ -38,6 +39,9 @@ export async function chatCompletion({ system, user, model, responseFormat }) {
   }
   if (responseFormat === 'json_object') {
     body.response_format = { type: 'json_object' }
+  }
+  if (typeof temperature === 'number') {
+    body.temperature = temperature
   }
 
   const resp = await fetch(`${baseURL}/chat/completions`, {

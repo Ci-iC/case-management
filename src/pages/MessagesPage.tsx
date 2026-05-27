@@ -7,7 +7,7 @@ import { messagesApi } from '@/api/messages'
 import { reviewsApi } from '@/api/reviews'
 import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
-import { isSuperAdmin } from '@/api/auth'
+import { hasCompanyRole } from '@/api/auth'
 import type { MessageRecord } from '@/types'
 import { ComposeMessageDialog } from '@/components/messages/ComposeMessageDialog'
 import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
@@ -58,6 +58,8 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
       if (folder === 'inbox' && !message.isRead) {
         await messagesApi.markRead(message.id)
         setList(prev => prev.map(x => x.id === message.id ? { ...x, isRead: true } : x))
+        // 立即通知侧边栏/顶栏刷新未读数（不必等 30 秒轮询）
+        window.dispatchEvent(new Event('messages:unread-changed'))
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载详情失败')
@@ -69,6 +71,8 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
       await messagesApi.remove(id)
       setList(prev => prev.filter(m => m.id !== id))
       if (selected?.id === id) setSelected(null)
+      // 删的可能是未读消息，通知刷新未读数
+      window.dispatchEvent(new Event('messages:unread-changed'))
     } catch (e) {
       window.alert(`删除失败：${e instanceof Error ? e.message : String(e)}`)
     }
@@ -144,7 +148,7 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
           {selected ? (
             <MessageDetailView
               message={selected}
-              canLegalReply={isSuperAdmin(me)}
+              canLegalReply={hasCompanyRole(me, 'legal')}
               onDelete={() => setDeleteId(selected.id)}
               onJumpToApproval={onJumpToApproval}
               onLegalRevisionUploaded={async () => {
@@ -249,8 +253,8 @@ function MessageListItem({
 // ─── Detail View ──────────────────────────────────────────────────────────────
 
 // canLegalReply: 当前用户能否在这条消息上做"法务答复"动作（上传修订版 / 直接通过）。
-// v1.3.2 起严格等价于 isSuperAdmin —— admin 是高管/业务方，不再做法务工作（原 prop 名 isAdmin
-// 沿用自 v1.3，因为那时 admin = 法务；本版改名以避免后续读代码误解）。
+// v2.0 多租户起：法务 = 当前公司里有 'legal' 角色的用户（platform_user）。
+// （v1.3.2 时曾等价于 isSuperAdmin，因为那时单租户、admin=法务；多租户后超管不参与业务。）
 function MessageDetailView({
   message, canLegalReply, onDelete, onLegalRevisionUploaded, onJumpToApproval,
 }: {

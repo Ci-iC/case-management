@@ -38,4 +38,14 @@ export async function readFileBuffer(absPath) {
   return fs.readFile(absPath)
 }
 
+/** multer fileFilter：清洁版只接受 Word（.doc/.docx），PDF 等其它格式一律拒绝。
+ *  抛 status=400 的错误，交全局错误处理器返干净提示。 */
+export function wordOnlyFileFilter(_req, file, cb) {
+  const ext = path.extname(file.originalname || '').toLowerCase()
+  if (ext === '.doc' || ext === '.docx') return cb(null, true)
+  const err = new Error('清洁版只支持 Word 文档（.doc / .docx），请勿上传 PDF 等其它格式')
+  err.status = 400
+  cb(err)
+}
+
 export { DATA_ROOT }

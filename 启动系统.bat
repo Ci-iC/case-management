@@ -83,6 +83,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: 2d) Seed initial superadmin if needed (idempotent: skips if superadmin already exists)
+call node server/seed.js
+if errorlevel 1 (
+    echo.
+    echo  [WARN] Seed step had an issue, but continuing.
+    echo.
+)
+
 echo.
 echo  Database is ready.
 echo.

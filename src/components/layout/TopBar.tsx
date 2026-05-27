@@ -27,7 +27,13 @@ export function TopBar({ active, onClick }: Props) {
     if (status !== 'authed') return
     fetchUnread()
     timer.current = window.setInterval(fetchUnread, POLL_INTERVAL)
-    return () => { if (timer.current) window.clearInterval(timer.current) }
+    // 读消息/删消息后立即刷新（不必等轮询）
+    const onChange = () => fetchUnread()
+    window.addEventListener('messages:unread-changed', onChange)
+    return () => {
+      if (timer.current) window.clearInterval(timer.current)
+      window.removeEventListener('messages:unread-changed', onChange)
+    }
   }, [status])
 
   // 当用户点开消息中心后，本地立即清零（详情页还会再触发一次刷新）

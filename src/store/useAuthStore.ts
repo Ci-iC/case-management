@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { authApi, type AuthUser } from '@/api/auth'
-import { setAuthToken, setUnauthorizedHandler, ApiError } from '@/api/client'
+import { setAuthToken, setUnauthorizedHandler, setMustChangePasswordHandler, ApiError } from '@/api/client'
 import { useCaseStore } from '@/store/useCaseStore'
 
 interface AuthState {
@@ -9,14 +9,15 @@ interface AuthState {
   user: AuthUser | null
   status: 'idle' | 'loading' | 'authed' | 'guest'
   error: string | null
-  /** v1.2: 被其他设备登录顶下来时显示的提示文案；用户关闭后清空 */
   sessionRevokedMessage: string | null
 
   login: (username: string, password: string) => Promise<void>
   logout: () => void
-  /** On app mount: if we have a persisted token, verify it with the server. */
   bootstrap: () => Promise<void>
-  /** 关闭"账号被顶下"提示 */
+  changePassword: (currentPassword: string, newPassword: string, confirmPassword: string) => Promise<void>
+  /** v2.0: 切换公司，重签 token + 重新加载 me。
+   *  opts.reload 默认 true（整页刷新）；超管"数据查询"按公司查数据时传 false，避免跳出当前面板 */
+  switchCompany: (companyId: string, opts?: { reload?: boolean }) => Promise<void>
   clearSessionRevoked: () => void
 }
 
@@ -46,7 +47,6 @@ export const useAuthStore = create<AuthState>()(persist((set, get) => ({
   logout() {
     setAuthToken(null)
     set({ token: null, user: null, status: 'guest', error: null })
-    // Clear cached case data so the next user doesn't briefly see stale rows
     useCaseStore.setState({ cases: [], filteredCases: [], totalCount: 0, selectedIds: [] })
   },
 
@@ -67,6 +67,31 @@ export const useAuthStore = create<AuthState>()(persist((set, get) => ({
     }
   },
 
+  async changePassword(currentPassword, newPassword, confirmPassword) {
+    const { token: newToken, user: newUser } = await authApi.changePassword(
+      currentPassword, newPassword, confirmPassword,
+    )
+    setAuthToken(newToken)
+    set({ token: newToken, user: newUser })
+  },
+
+  async switchCompany(companyId, opts) {
+    const reload = opts?.reload !== false   // 默认 true
+    const { token: newToken } = await authApi.switchCompany(companyId)
+    setAuthToken(newToken)
+    set({ token: newToken })
+    // 重新拉 me（拿新的 companyRoles / currentCompany）
+    const { user } = await authApi.me()
+    set({ user })
+    // 清空缓存，避免上一家公司的数据残留
+    useCaseStore.setState({ cases: [], filteredCases: [], totalCount: 0, selectedIds: [] })
+    // v2.1+: 整页刷新，确保各页面（合同台账 / 审批 / 消息等）都重新按新公司加载数据。
+    //   超管"数据查询"按公司查数据时传 reload:false —— 它不希望跳出查询面板。
+    if (reload && typeof window !== 'undefined') {
+      window.location.reload()
+    }
+  },
+
   clearSessionRevoked() {
     set({ sessionRevokedMessage: null })
   },
@@ -75,12 +100,17 @@ export const useAuthStore = create<AuthState>()(persist((set, get) => ({
   partialize: (s) => ({ token: s.token, user: s.user }),
 }))
 
-// Wire 401 → logout (runs once at module load)
-// 如果是被其他设备登录顶下（sessionRevoked=true），登出时附带提示文案给 UI 显示
 setUnauthorizedHandler((sessionRevoked) => {
   const store = useAuthStore.getState()
   store.logout()
   if (sessionRevoked) {
     useAuthStore.setState({ sessionRevokedMessage: SESSION_REVOKED_MESSAGE })
+  }
+})
+
+setMustChangePasswordHandler(() => {
+  const { user } = useAuthStore.getState()
+  if (user && !user.mustChangePassword) {
+    useAuthStore.setState({ user: { ...user, mustChangePassword: true } })
   }
 })

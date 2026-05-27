@@ -1,16 +1,28 @@
 import { useRef, useState } from 'react'
-import { UploadCloud, Sparkles, AlertCircle, X, FileText, Settings } from 'lucide-react'
+import { UploadCloud, Sparkles, AlertCircle, X, FileText } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useCaseStore } from '@/store/useCaseStore'
-import { useSettingsStore, MODEL_OPTIONS } from '@/store/useSettingsStore'
-import { detectFileKind, extractCaseFromFiles, type OurRole } from '@/utils/aiExtract'
+import { casesApi } from '@/api/cases'
+import { ApiError } from '@/api/client'
 import { cn } from '@/utils/helpers'
+
+type OurRole = 'plaintiff' | 'defendant'
+
+// v2.0：模型/API Key 由平台超管在「平台设置」里配，业务用户不在这里选模型
+const SUPPORTED_EXT = ['.pdf', '.docx', '.doc']
+function detectFileKind(file: File): 'pdf' | 'docx' | 'unsupported' {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.pdf')) return 'pdf'
+  if (name.endsWith('.docx') || name.endsWith('.doc')) return 'docx'
+  return 'unsupported'
+}
 
 interface Props {
   open: boolean
   onClose: () => void
-  onOpenSettings: () => void
+  /** 兼容历史 prop，v2.0 不再使用 */
+  onOpenSettings?: () => void
 }
 
 function formatSize(bytes: number): string {
@@ -19,12 +31,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
+export function SmartImportModal({ open, onClose }: Props) {
   const { openFormWithPrefill } = useCaseStore()
-  const settings = useSettingsStore()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [model, setModel] = useState(settings.defaultModel)
   const [ourRole, setOurRole] = useState<OurRole | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
@@ -36,7 +46,6 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
     setError(undefined)
     setLoading(false)
     setDragging(false)
-    setModel(settings.defaultModel)
     setOurRole(null)
   }
 
@@ -90,10 +99,6 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
   }
 
   async function handleExtract() {
-    if (!settings.apiKey) {
-      setError('尚未配置 OpenAI API Key，请先到「设置」填写')
-      return
-    }
     if (!ourRole) {
       setError('请先选择我方在本案中的身份')
       return
@@ -102,29 +107,19 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
     setError(undefined)
     setLoading(true)
     try {
-      const { data } = await extractCaseFromFiles({
-        files,
-        model,
-        ourRole,
-        settings: {
-          apiKey: settings.apiKey,
-          baseURL: settings.baseURL,
-          defaultModel: settings.defaultModel,
-        },
-      })
+      const { data } = await casesApi.aiExtract(files, ourRole)
       // Hand off to CaseFormDrawer for user review
       openFormWithPrefill(data)
       onClose()
       setTimeout(reset, 300)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : String(e)))
     } finally {
       setLoading(false)
     }
   }
 
   const totalSize = files.reduce((acc, f) => acc + f.size, 0)
-  const hasKey = !!settings.apiKey
 
   return (
     <Modal open={open} onClose={handleClose} title="案件材料智能录入">
@@ -132,26 +127,6 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
         <p className="text-sm text-slate-600">
           上传一个案件的相关材料（PDF / Word），AI 将自动综合提取案件信息，结果可在下一步手动核对后入库。
         </p>
-
-        {/* API key missing banner */}
-        {!hasKey && (
-          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
-            <AlertCircle size={15} className="mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <p>尚未配置 OpenAI API Key，无法使用智能录入</p>
-              <button
-                type="button"
-                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-900 underline"
-                onClick={() => {
-                  onClose()
-                  setTimeout(onOpenSettings, 250)
-                }}
-              >
-                <Settings size={12} /> 前往设置
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Our role selector */}
         <div>
@@ -194,22 +169,7 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
           </div>
         </div>
 
-        {/* Model selector */}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">模型</label>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="form-select"
-            disabled={loading}
-          >
-            {MODEL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}{o.note ? `（${o.note}）` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* v2.0: 模型由平台超管在「平台设置」统一管理，此处不暴露 */}
 
         {/* Drop zone */}
         <div>
@@ -311,7 +271,7 @@ export function SmartImportModal({ open, onClose, onOpenSettings }: Props) {
               icon={<Sparkles size={14} />}
               onClick={handleExtract}
               loading={loading}
-              disabled={!hasKey || !ourRole || files.length === 0 || loading}
+              disabled={!ourRole || files.length === 0 || loading}
             >
               开始识别
             </Button>

@@ -253,8 +253,8 @@ export interface Contact {
   id: string
   username: string
   displayName?: string | null
-  /** v1.2 起含 superadmin */
-  role: 'superadmin' | 'admin' | 'user'
+  /** v2.0：当前公司里的角色列表（manager/legal/seal_admin/finance/staff） */
+  roles: string[]
 }
 
 // ─── M6: 合同台账 ─────────────────────────────────────────────────────────────
@@ -296,6 +296,22 @@ export interface ContractRecord {
   approvalStartedAt: string | null
   versionCount: number
   lastReviewedAt: string | null
+  /** v2.0 多租户 */
+  companyId?: string
+  companyName?: string | null
+  /** v1.4 结构化字段 */
+  ourParties?: string[]
+  counterParties?: string[]
+  contractType?: string | null
+  paymentType?: string | null
+  contractAmount?: number | null
+  termType?: string | null
+  termDate?: string | null
+  termText?: string | null
+  handlerId?: string | null
+  handlerUsername?: string | null
+  handlerDisplayName?: string | null
+  termNotifiedAt?: string | null
   /** 详情时附带：reviews 列表 */
   reviews?: ContractReviewVersion[]
   /** v1.3.1 详情时附带：合同最近一条 approval id（已完成 / 已驳回 / 进行中都行），用于"跳转到审批"按钮 */
@@ -347,6 +363,8 @@ export interface ApprovalStep {
   assigneeId: string
   assigneeUsername?: string
   assigneeDisplayName?: string
+  /** v2.1+: 该步骤处理人在本公司的角色（用于判断是否到达印章管理员节点） */
+  assigneeRoles?: string[]
   status: ApprovalStepStatus
   comment: string | null
   actionedAt: string | null

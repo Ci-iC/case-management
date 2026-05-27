@@ -3,6 +3,8 @@
 let currentToken: string | null = null
 /** 401 处理：第二参数 sessionRevoked=true 表示账号在其他设备登录被踢，需要弹提示 */
 let onUnauthorized: ((sessionRevoked?: boolean) => void) | null = null
+/** v1.4: 423 处理。后端返回 423 + mustChangePassword=true，意味着用户必须先改密码 */
+let onMustChangePassword: (() => void) | null = null
 
 export function setAuthToken(token: string | null) {
   currentToken = token
@@ -32,6 +34,15 @@ export async function apiFetchForm<T = unknown>(
     onUnauthorized?.(sessionRevoked)
     throw new ApiError(msg, 401)
   }
+  if (resp.status === 423) {
+    let msg = '请先修改初始密码后再使用其他功能'
+    try {
+      const body = await resp.json() as { error?: string; mustChangePassword?: boolean }
+      msg = body?.error || msg
+      if (body?.mustChangePassword) onMustChangePassword?.()
+    } catch { /* ignore */ }
+    throw new ApiError(msg, 423)
+  }
   if (!resp.ok) {
     let msg = `请求失败 (${resp.status})`
     let body: unknown = undefined
@@ -46,7 +57,18 @@ export async function apiFetchForm<T = unknown>(
 export async function downloadFile(path: string, filename: string): Promise<void> {
   const headers = getAuthHeader()
   const resp = await fetch(path, { headers })
-  if (!resp.ok) throw new ApiError(`下载失败 (${resp.status})`, resp.status)
+  if (!resp.ok) {
+    // 失败时后端通常返回 JSON { error }，把真实原因透出来（而不是笼统的"下载失败"）
+    let msg = `下载失败 (${resp.status})`
+    try {
+      const ct = resp.headers.get('content-type') || ''
+      if (ct.includes('application/json')) {
+        const body = await resp.json() as { error?: string }
+        if (body?.error) msg = body.error
+      }
+    } catch { /* ignore */ }
+    throw new ApiError(msg, resp.status)
+  }
   const blob = await resp.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -60,6 +82,10 @@ export async function downloadFile(path: string, filename: string): Promise<void
 
 export function setUnauthorizedHandler(fn: (sessionRevoked?: boolean) => void) {
   onUnauthorized = fn
+}
+
+export function setMustChangePasswordHandler(fn: () => void) {
+  onMustChangePassword = fn
 }
 
 export class ApiError extends Error {
@@ -92,6 +118,16 @@ export async function apiFetch<T = unknown>(
     } catch { /* ignore */ }
     onUnauthorized?.(sessionRevoked)
     throw new ApiError(msg, 401)
+  }
+
+  if (resp.status === 423) {
+    let msg = '请先修改初始密码后再使用其他功能'
+    try {
+      const body = await resp.json() as { error?: string; mustChangePassword?: boolean }
+      msg = body?.error || msg
+      if (body?.mustChangePassword) onMustChangePassword?.()
+    } catch { /* ignore */ }
+    throw new ApiError(msg, 423)
   }
 
   if (!resp.ok) {

@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Download, FileText, ChevronDown, ChevronUp, Sparkles, Check, X, UserPlus, Upload, Send, RefreshCcw, AlertCircle } from 'lucide-react'
+import { Download, FileText, ChevronDown, ChevronUp, Sparkles, Check, X, UserPlus, Upload, Send, RefreshCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { approvalsApi, downloadSealedContract, downloadCleanContract } from '@/api/approvals'
+import { approvalsApi, downloadSealedContract, downloadCleanContract, downloadWatermarkPdf } from '@/api/approvals'
 import { reviewsApi } from '@/api/reviews'
 import { messagesApi } from '@/api/messages'
 import { ApiError } from '@/api/client'
 import { useAuthStore } from '@/store/useAuthStore'
-import { isSuperAdmin } from '@/api/auth'
 import { cn } from '@/utils/helpers'
 import { CONTRACT_STATUS_BADGE, CONTRACT_STATUS_LABELS } from '@/constants'
 import type { ApprovalDetail, ApprovalStep, Contact, ContractStatus } from '@/types'
@@ -134,6 +133,18 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
               </div>
             </button>
           )}
+
+          {/* v2.1+: 印章管理员 / 经办人可一键导出带公司水印的 PDF 用于打印盖章 */}
+          <WatermarkExportButton
+            approvalId={approval.id}
+            contractCode={contract.code}
+            contractName={contract.name}
+            cleanFilename={contract.cleanFilename}
+            meIsSealAdmin={(me?.companyRoles || []).includes('seal_admin')}
+            isInitiator={approval.initiatorId === me?.id}
+            approverSteps={approverSteps}
+            currentStepId={approval.currentStepId}
+          />
         </div>
       </section>
 
@@ -287,6 +298,75 @@ function ActionTimeline({ data }: { data: ApprovalDetail }) {
   )
 }
 
+// v2.1+: 一键导出"用印水印版" PDF
+function WatermarkExportButton({
+  approvalId, contractCode, contractName, cleanFilename,
+  meIsSealAdmin, isInitiator, approverSteps, currentStepId,
+}: {
+  approvalId: string
+  contractCode: string
+  contractName: string
+  cleanFilename: string | null
+  meIsSealAdmin: boolean
+  isInitiator: boolean
+  approverSteps: ApprovalStep[]
+  currentStepId: string | null
+}) {
+  const [downloading, setDownloading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // 显示条件：
+  //   1. 合同已有清洁版（PDF 转换需要源 Word）
+  //   2. 当前用户是经办人 或 印章管理员
+  //   3. 流程已经"到达或越过"印章管理员节点 —— 在那之前合同可能被驳回、内容会变，不给提前下载。
+  //      印章管理员节点 = 主链里 assignee 角色含 seal_admin 的那个 approver step。
+  //      "到达或越过" = 该 step 正是当前步（印章管理员正在处理）或已 approved（印章已通过）。
+  if (!cleanFilename) return null
+  if (!meIsSealAdmin && !isInitiator) return null
+
+  const sealStep = approverSteps.find(s => (s.assigneeRoles || []).includes('seal_admin'))
+  const reachedSeal = !!sealStep && (sealStep.id === currentStepId || sealStep.status === 'approved')
+  if (!reachedSeal) return null
+
+  async function onClick() {
+    setDownloading(true)
+    setErr(null)
+    try {
+      const fname = `${contractCode}_${contractName}_用印版.pdf`
+      await downloadWatermarkPdf(approvalId, fname)
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : '导出失败'))
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <button
+        onClick={onClick}
+        disabled={downloading}
+        className="w-full flex items-center gap-3 rounded-lg bg-amber-50 border-2 border-amber-200 px-4 py-3 hover:bg-amber-100 text-left disabled:opacity-60 disabled:cursor-wait"
+      >
+        <Download size={18} className="text-amber-700 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-amber-900">
+            {downloading ? '正在生成水印 PDF…' : '导出用印水印版 PDF'}
+          </p>
+          <p className="text-[11px] text-amber-700">
+            清洁版合同 + 公司全称水印，供印章管理员或经办人打印盖章
+          </p>
+        </div>
+      </button>
+      {err && (
+        <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+          {err}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function ActionLabel({
   action, target, payload, steps,
 }: {
@@ -375,8 +455,7 @@ function ActionPanel({
     )
   }
 
-  // approver 节点：通过 / 驳回 / 加签
-  const isFirstStep = currentStep.stepIndex === 1
+  // approver 节点：通过 / 驳回 / 加签（v2.1：审批人在发起时已具化，通过不再需要再次指派后续）
   return (
     <>
       <ActionRoot title="待你审批">
@@ -395,7 +474,6 @@ function ActionPanel({
         open={approveOpen}
         onClose={() => setApproveOpen(false)}
         approvalId={approvalId}
-        needsNextApprovers={isFirstStep}
         onDone={onDone}
       />
       <RejectDialog
@@ -426,43 +504,29 @@ function ActionRoot({ title, children }: { title: string; children: React.ReactN
 // ─── 通过对话框（含可选指派下一审批人） ────────────────────────────────────
 
 function ApproveDialog({
-  open, onClose, approvalId, needsNextApprovers, onDone,
+  open, onClose, approvalId, onDone,
 }: {
   open: boolean
   onClose: () => void
   approvalId: string
-  needsNextApprovers: boolean
   onDone: () => void
 }) {
-  const me = useAuthStore(s => s.user)
-  const isSuper = isSuperAdmin(me)
   const [comment, setComment] = useState('')
-  const [contacts, setContacts] = useState<Contact[]>([])
-  const [picked, setPicked] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
     setComment('')
-    setPicked([])
     setError(null)
-    if (needsNextApprovers) {
-      messagesApi.contacts()
-        .then(({ contacts }) => setContacts(contacts))
-        .catch(e => setError(e instanceof Error ? e.message : '加载联系人失败'))
-    }
-  }, [open, needsNextApprovers])
+  }, [open])
 
   async function onSubmit() {
     if (!comment.trim()) { setError('请填写审批意见'); return }
     setSubmitting(true)
     setError(null)
     try {
-      await approvalsApi.approve(approvalId, {
-        comment: comment.trim(),
-        ...(needsNextApprovers ? { nextApprovers: picked } : {}),
-      })
+      await approvalsApi.approve(approvalId, { comment: comment.trim() })
       onDone()
       onClose()
     } catch (e) {
@@ -472,35 +536,11 @@ function ApproveDialog({
     }
   }
 
-  function toggle(id: string) {
-    setPicked(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
-  }
-  function move(idx: number, dir: -1 | 1) {
-    setPicked(p => {
-      const next = [...p]
-      const j = idx + dir
-      if (j < 0 || j >= next.length) return p
-      ;[next[idx], next[j]] = [next[j], next[idx]]
-      return next
-    })
-  }
-
   if (!open) return null
 
   return (
     <Modal open={open} onClose={onClose} title="审批通过">
       <div className="w-[520px] max-w-full space-y-3">
-        {needsNextApprovers && (
-          <div className="rounded bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800 flex items-start gap-2">
-            <AlertCircle size={12} className="mt-0.5 shrink-0" />
-            <div>
-              作为超级管理员，请在下方<strong>指派后续审批人并排序</strong>。
-              留空表示无后续审批人，直接流转到经办人传用印版。
-              {!isSuper && '（你不是超级管理员，但当前是 step 1。这是异常情况，请联系系统管理员）'}
-            </div>
-          </div>
-        )}
-
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-600">审批意见 *</label>
           <textarea
@@ -511,52 +551,6 @@ function ApproveDialog({
             placeholder="必填，简述审批意见"
           />
         </div>
-
-        {needsNextApprovers && (
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">
-              后续审批人（按顺序，已选 {picked.length}）
-            </label>
-
-            {picked.length > 0 && (
-              <div className="rounded border border-slate-200 bg-slate-50 p-2 mb-2 space-y-1">
-                {picked.map((id, idx) => {
-                  const c = contacts.find(x => x.id === id)
-                  return (
-                    <div key={id} className="flex items-center gap-2 text-xs">
-                      <span className="w-5 text-slate-400 text-right">{idx + 1}.</span>
-                      <span className="flex-1 truncate">{c?.displayName || c?.username || id}</span>
-                      <button onClick={() => move(idx, -1)} disabled={idx === 0} className="px-1 text-slate-400 hover:text-slate-700 disabled:opacity-30">↑</button>
-                      <button onClick={() => move(idx, 1)} disabled={idx === picked.length - 1} className="px-1 text-slate-400 hover:text-slate-700 disabled:opacity-30">↓</button>
-                      <button onClick={() => toggle(id)} className="px-1 text-red-500 hover:text-red-700">×</button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            <div className="rounded border border-slate-200 max-h-48 overflow-y-auto">
-              {contacts.filter(c => !picked.includes(c.id)).map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => toggle(c.id)}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 flex items-center justify-between"
-                >
-                  <span>
-                    {c.displayName || c.username}（{c.username}）
-                    <span className="ml-1 text-[10px] text-slate-400">
-                      {c.role === 'superadmin' ? '超管' : c.role === 'admin' ? '管理员' : '普通'}
-                    </span>
-                  </span>
-                  <span className="text-primary-600 text-[10px]">+ 添加</span>
-                </button>
-              ))}
-              {contacts.filter(c => !picked.includes(c.id)).length === 0 && (
-                <p className="px-3 py-2 text-xs text-slate-400">没有更多联系人可选</p>
-              )}
-            </div>
-          </div>
-        )}
 
         {error && (
           <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">{error}</p>
@@ -714,7 +708,7 @@ function ConsulteeAddDialog({
             {contacts.map(c => (
               <option key={c.id} value={c.id}>
                 {c.displayName || c.username}（{c.username}）
-                {c.role === 'superadmin' ? ' · 超管' : c.role === 'admin' ? ' · 管理员' : ''}
+                {(c.roles || []).length > 0 ? ` · ${(c.roles || []).join('/')}` : ''}
               </option>
             ))}
           </select>
@@ -863,16 +857,18 @@ function ResubmitButton({ approvalId, onDone }: { approvalId: string; onDone: ()
 
 function UploadSealButton({ approvalId, onDone }: { approvalId: string; onDone: () => void }) {
   const [file, setFile] = useState<File | null>(null)
+  const [sealedAt, setSealedAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function onSubmit() {
     if (!file) { setError('请选择用印版文件'); return }
+    if (!sealedAt || !/^\d{4}-\d{2}-\d{2}$/.test(sealedAt)) { setError('请填写用印日期'); return }
     setSubmitting(true)
     setError(null)
     try {
-      await approvalsApi.uploadSeal(approvalId, file, comment.trim() || undefined)
+      await approvalsApi.uploadSeal(approvalId, file, sealedAt, comment.trim() || undefined)
       onDone()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : '上传失败'))
@@ -882,22 +878,35 @@ function UploadSealButton({ approvalId, onDone }: { approvalId: string; onDone: 
   }
 
   return (
-    <div className="w-full">
-      <input
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-        onChange={e => setFile(e.target.files?.[0] || null)}
-        className="block text-xs mb-2"
-      />
+    <div className="w-full space-y-2">
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">用印版文件 *</label>
+        <input
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+          onChange={e => setFile(e.target.files?.[0] || null)}
+          className="block text-xs"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">用印日期 *</label>
+        <input
+          type="date"
+          value={sealedAt}
+          onChange={e => setSealedAt(e.target.value)}
+          className="form-input"
+          required
+        />
+      </div>
       <textarea
-        className="form-textarea mb-2"
+        className="form-textarea"
         rows={2}
         value={comment}
         onChange={e => setComment(e.target.value)}
         placeholder="备注（可选）"
       />
       {error && (
-        <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700 mb-2">{error}</p>
+        <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">{error}</p>
       )}
       <Button variant="primary" size="md" icon={<Upload size={14} />} loading={submitting} onClick={onSubmit} disabled={!file}>
         上传用印版并完成流程

@@ -1,25 +1,23 @@
-// One-shot superadmin seeding. Idempotent: skips if any admin/superadmin already exists.
-// Run via: node server/seed.js
+// v2.0 全新空库 seed：建一个 superadmin（平台超管），不归属公司。
+// 公司、其他用户都由超管登录后在控制台里建。
 //
-// v1.3 起：默认创建 role='superadmin'（系统至少要有一个超管才能管账号、改设置）
-// 老环境（v1.1 时已有 admin）migration 012 会自动把首个 admin 升级为 superadmin，
-// 此处仅处理"全新空库"场景下的首次种子。
+// 运行：node server/seed.js
+// 幂等：若已存在 superadmin / platform_user 则跳过（包括 v1.x 升级 v2.0 后 migration 自动创建的 superadmin）
 
 import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import { db, cryptoId } from './db.js'
 
-async function seedAdmin() {
-  // 任何已存在（未删除）的 admin 或 superadmin 都视为"已 seed 过"
-  // v1.3.2 起 users 是软删除，要排除 deleted_at 非空的行，否则把已删除的 admin 当成"存在"会跳过种子
+async function seedSuperAdmin() {
   const existing = await db('users')
-    .whereIn('role', ['admin', 'superadmin'])
+    .where('role', 'superadmin')
     .whereNull('deleted_at')
     .first()
   if (existing) {
-    console.log(`[seed] ${existing.role} already exists (${existing.username}), skipping.`)
+    console.log(`[seed] superadmin already exists (${existing.username}), skipping.`)
     return
   }
+
   const username = process.env.ADMIN_USERNAME
   const password = process.env.ADMIN_PASSWORD
   const displayName = process.env.ADMIN_DISPLAY_NAME || '系统管理员'
@@ -28,6 +26,7 @@ async function seedAdmin() {
     process.exitCode = 1
     return
   }
+
   const id = cryptoId()
   const hash = await bcrypt.hash(password, 10)
   await db('users').insert({
@@ -36,15 +35,16 @@ async function seedAdmin() {
     password_hash: hash,
     role: 'superadmin',
     display_name: displayName,
-    can_view_cases: true,
-    can_view_contracts: true,
+    can_view_cases: false,        // v2.0: 公司层权限不再用这个字段
+    can_view_contracts: false,
+    must_change_password: true,   // v2.0: 首次登录强制改密
     created_at: new Date(),
     created_by: 'system',
   })
-  console.log(`[seed] created superadmin: username="${username}" (password is from ADMIN_PASSWORD env)`)
-  console.log('[seed] please change the password after first login.')
+  console.log(`[seed] created superadmin: username="${username}"`)
+  console.log('[seed] 首次登录会被强制改密码。请妥善保管初始密码。')
 }
 
-seedAdmin()
+seedSuperAdmin()
   .catch((e) => { console.error('[seed] failed:', e); process.exitCode = 1 })
   .finally(() => db.destroy())

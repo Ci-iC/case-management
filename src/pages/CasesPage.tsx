@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Download, Upload, X, Sparkles, Settings } from 'lucide-react'
+import { Plus, Download, Upload, X, Sparkles } from 'lucide-react'
 import { useCaseStore } from '@/store/useCaseStore'
 import { Button } from '@/components/ui/Button'
 import { CaseStatsBar } from '@/components/cases/CaseStatsBar'
@@ -9,7 +9,6 @@ import { CaseDetailDrawer } from '@/components/cases/CaseDetailDrawer'
 import { CaseFormDrawer } from '@/components/cases/CaseFormDrawer'
 import { ImportModal } from '@/components/cases/ImportModal'
 import { SmartImportModal } from '@/components/cases/SmartImportModal'
-import { SettingsModal } from '@/components/settings/SettingsModal'
 import { exportCasesToTxt } from '@/utils/importExport'
 
 /**
@@ -20,7 +19,6 @@ export default function CasesPage() {
   const { openForm, totalCount, filteredCases, selectedIds, clearSelection } = useCaseStore()
   const [importOpen, setImportOpen] = useState(false)
   const [smartOpen, setSmartOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const hasSelection = selectedIds.length > 0
 
@@ -98,13 +96,6 @@ export default function CasesPage() {
             >
               新增案件
             </Button>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              title="系统设置"
-              className="ml-1 p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-            >
-              <Settings size={16} />
-            </button>
           </div>
         </div>
 
@@ -128,15 +119,8 @@ export default function CasesPage() {
       {/* Import modal */}
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
 
-      {/* Smart import (AI) */}
-      <SmartImportModal
-        open={smartOpen}
-        onClose={() => setSmartOpen(false)}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-
-      {/* Settings */}
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {/* Smart import (AI) — v2.0：直接调服务端，使用平台 OpenAI Key */}
+      <SmartImportModal open={smartOpen} onClose={() => setSmartOpen(false)} />
     </>
   )
 }

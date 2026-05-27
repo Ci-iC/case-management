@@ -1,8 +1,10 @@
-// v1.3 合同审批流程
+// v2.1 合同审批流程（模板驱动）
 //
 // 流程语义：
-//   - 经办人（contract.created_by）发起审批 → 第一步必须是 superadmin
-//   - 超管审批通过时填后续审批人列表（按顺序）
+//   - 经办人（contract.created_by）发起审批 → 系统读取本公司 active 的 approval_templates
+//     按模板生成 approval_steps 主链 step_index=1..N（superadmin 不出现在任何节点）
+//   - 发起时，对每个模板步骤，前端从候选人（公司内有对应角色的用户）中指定具体审批人
+//     单人角色自动填，多人角色让发起人挑
 //   - 后续审批人按顺序流转：通过/驳回/加签
 //   - 加签：临时分支咨询某人 → 那人只能"提交意见"无通过/驳回 → 控制权回到加签人
 //   - 驳回-到经办人节点：经办人改完直接跳回驳回人（不重走中间已通过节点）
@@ -13,13 +15,24 @@ import { Router } from 'express'
 import multer from 'multer'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { pathToFileURL } from 'node:url'
+import { PDFDocument, degrees, rgb } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 import { db, writeAudit } from '../db.js'
-import { requireAuth, isAdminOrAbove, isSuperAdmin } from '../auth.js'
+import {
+  requireAuth, requireCompanyContext, requireCompanyRole,
+  hasCompanyRole, canReadContractRow,
+} from '../auth.js'
 import { chatCompletion } from '../openai.js'
-import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
+import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink, wordOnlyFileFilter } from '../storage.js'
+
+const execFileP = promisify(execFile)
 
 const r = Router()
-r.use(requireAuth)
+r.use(requireAuth, requireCompanyContext)
 
 // ─── 上传 multer ─────────────────────────────────────────────────────────────
 const UPLOAD_MAX_BYTES = Number(process.env.UPLOAD_MAX_BYTES) || 20 * 1024 * 1024
@@ -42,6 +55,7 @@ const sealUpload = multer({
 })
 
 // 清洁版：先存 tmp，事务里搬到 clean/<contractId>/（避免 multer destination 阶段 body 还没解析）
+// fileFilter：清洁版只允许 Word（.doc/.docx），PDF 等会被拒绝
 const cleanUpload = multer({
   storage: multer.diskStorage({
     destination: async (_req, _file, cb) => {
@@ -53,6 +67,7 @@ const cleanUpload = multer({
     },
   }),
   limits: { fileSize: UPLOAD_MAX_BYTES },
+  fileFilter: wordOnlyFileFilter,
 })
 
 // ─── AI 合同摘要 ──────────────────────────────────────────────────────────────
@@ -185,7 +200,7 @@ function toIso(v) {
 }
 
 const APPROVAL_SELECT = [
-  'a.id', 'a.contract_id', 'a.initiator_id', 'a.status', 'a.initiation_note',
+  'a.id', 'a.contract_id', 'a.company_id', 'a.initiator_id', 'a.status', 'a.initiation_note',
   'a.current_step_id', 'a.created_at', 'a.updated_at', 'a.completed_at', 'a.rejected_at',
   'c.code as contract_code', 'c.name as contract_name', 'c.status as contract_status',
   'iu.username as initiator_username', 'iu.display_name as initiator_display_name',
@@ -203,7 +218,7 @@ function joinApproval(q) {
 }
 
 // ─── 工具：写一条 action ──────────────────────────────────────────────────────
-async function writeAction(trx, { approvalId, stepId, actorId, action, comment, targetStepId, payload }) {
+async function writeAction(trx, { approvalId, stepId, actorId, action, comment, targetStepId, payload, companyId }) {
   await trx('approval_actions').insert({
     approval_id: approvalId,
     step_id: stepId || null,
@@ -212,18 +227,19 @@ async function writeAction(trx, { approvalId, stepId, actorId, action, comment, 
     comment: comment || null,
     target_step_id: targetStepId || null,
     payload: payload ? JSON.stringify(payload) : null,
+    company_id: companyId,
   })
 }
 
 // ─── 工具：审批流转通知 ──────────────────────────────────────────────────────
-//   每次状态流转后给当前 assignee 发一条站内信（带 approval_id，前端识别后给"跳转到审批"按钮）
-async function sendApprovalNotice(trx, { approvalId, senderId, recipientId, body }) {
+async function sendApprovalNotice(trx, { approvalId, senderId, recipientId, body, companyId }) {
   if (!recipientId || recipientId === senderId) return
   await trx('messages').insert({
     sender_id: senderId,
     receiver_id: recipientId,
     body,
     approval_id: approvalId,
+    company_id: companyId,
     is_read: false,
   })
 }
@@ -245,27 +261,50 @@ function buildNoticeBody({ contract, action, actorName, extra }) {
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-// POST /api/approvals — 发起审批
-//   body: contractId, firstApproverId (superadmin), initiationNote?
-// 发起审批：multipart，含可选清洁版文件 + reuseExistingClean=true 时沿用合同已有的清洁版
-r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
+// POST /api/approvals — 发起审批（v2.1）
+//   body:
+//     contractId           合同 id
+//     stepAssignments      [{ stepIndex, userId }] —— 必须覆盖模板里全部步骤
+//     initiationNote       可选
+//     reuseExistingClean   "true" | "false"
+//     cleanFile            可选 multipart 文件
+//
+//   v2.1 改造点：
+//     - 移除"第一步给 superadmin"的硬编码，superadmin 不再出现在任何审批节点
+//     - 读取当前公司 active 的 approval_templates，按模板生成 approval_steps 主链
+//     - 经办人最终节点（step_index=999, step_type=final-initiator）保持不变
+r.post('/', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 'staff'),
+  cleanUpload.single('cleanFile'), async (req, res, next) => {
   let savedAbsPath = req.file?.path || null
   try {
-    const { contractId, firstApproverId, initiationNote } = req.body || {}
+    const { contractId, initiationNote } = req.body || {}
     const reuseClean = req.body?.reuseExistingClean === 'true' || req.body?.reuseExistingClean === true
+
+    // stepAssignments 可能是 JSON 字符串（FormData）或对象/数组
+    let stepAssignments = req.body?.stepAssignments
+    if (typeof stepAssignments === 'string') {
+      try { stepAssignments = JSON.parse(stepAssignments) } catch {
+        return res.status(400).json({ error: 'stepAssignments 必须是合法的 JSON 数组' })
+      }
+    }
     if (!contractId) return res.status(400).json({ error: '请选择合同' })
-    if (!firstApproverId) return res.status(400).json({ error: '请选择第一位审批人（必须是超级管理员）' })
+    if (!Array.isArray(stepAssignments) || stepAssignments.length === 0) {
+      return res.status(400).json({ error: '请为每个审批步骤指定审批人' })
+    }
 
     const contract = await db('contracts').where({ id: contractId }).first()
     if (!contract) return res.status(404).json({ error: '合同不存在' })
+    if (contract.company_id !== req.user.currentCompanyId) {
+      return res.status(403).json({ error: '该合同不属于当前公司' })
+    }
     if (contract.status !== 'drafting') {
       return res.status(400).json({ error: '该合同当前不是"起草中"状态，不能发起审批' })
     }
-    if (contract.created_by !== req.user.id && !isAdminOrAbove(req.user)) {
+    if (!canReadContractRow(req.user, contract)) {
       return res.status(403).json({ error: '无权对该合同发起审批' })
     }
 
-    // v1.3.1: 必须经过法务（reviewed_storage_path 非空 OR legal_approved=true）
+    // 必须经过法务（reviewed_storage_path 非空 OR legal_approved=true）
     const reviewedRow = await db('case_reviews')
       .where({ contract_id: contractId, is_draft: false })
       .where(function () {
@@ -277,12 +316,6 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
       return res.status(400).json({ error: '该合同尚未经法务审核（法务上传修订版或点过"无需修订直接通过"），不能发起审批' })
     }
 
-    const firstApprover = await db('users').where({ id: firstApproverId }).first()
-    if (!firstApprover) return res.status(404).json({ error: '指定的第一审批人不存在' })
-    if (firstApprover.role !== 'superadmin') {
-      return res.status(400).json({ error: '第一审批人必须是超级管理员' })
-    }
-
     const activeApproval = await db('approvals')
       .where({ contract_id: contractId, status: 'pending' })
       .first()
@@ -290,20 +323,87 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
       return res.status(409).json({ error: '该合同已有进行中的审批' })
     }
 
+    const initiatorId = contract.created_by
+    const companyId = contract.company_id
+
+    // ─── 读取 active 模板 + 步骤 ────────────────────────────────────────────
+    const template = await db('approval_templates')
+      .where({ company_id: companyId, is_active: true })
+      .first()
+    if (!template) {
+      return res.status(412).json({
+        error: '本公司尚未配置生效中的审批流模板，请联系平台超管在企业管理中配置',
+        templateMissing: true,
+      })
+    }
+    const templateSteps = await db('approval_template_steps')
+      .where({ template_id: template.id })
+      .orderBy('step_index', 'asc')
+    if (templateSteps.length === 0) {
+      return res.status(412).json({
+        error: '生效中的审批流模板没有任何步骤，请联系平台超管补充',
+        templateMissing: true,
+      })
+    }
+
+    // ─── 校验 stepAssignments ────────────────────────────────────────────────
+    // 必须按 stepIndex 全部覆盖，且每个 userId 在当前公司确实有对应 role
+    const assignmentMap = new Map() // stepIndex → userId
+    for (const a of stepAssignments) {
+      const idx = Number(a?.stepIndex)
+      const uid = String(a?.userId || '').trim()
+      if (!Number.isInteger(idx) || !uid) {
+        return res.status(400).json({ error: 'stepAssignments 每项必须含 stepIndex 与 userId' })
+      }
+      assignmentMap.set(idx, uid)
+    }
+
+    const allAssigneeIds = [...new Set(assignmentMap.values())]
+    // 一次拉所有候选人角色信息，便于校验
+    const ucrRows = await db('user_company_roles as ucr')
+      .innerJoin('users as u', 'ucr.user_id', 'u.id')
+      .whereNull('u.deleted_at')
+      .where('ucr.company_id', companyId)
+      .whereIn('ucr.user_id', allAssigneeIds)
+      .select('ucr.user_id', 'ucr.role')
+    const rolesByUser = new Map()
+    for (const r of ucrRows) {
+      if (!rolesByUser.has(r.user_id)) rolesByUser.set(r.user_id, new Set())
+      rolesByUser.get(r.user_id).add(r.role)
+    }
+
+    for (const ts of templateSteps) {
+      const uid = assignmentMap.get(ts.step_index)
+      if (!uid) {
+        return res.status(400).json({
+          error: `审批步骤 #${ts.step_index}（${ts.role}）未指定审批人`,
+        })
+      }
+      const roles = rolesByUser.get(uid)
+      if (!roles || !roles.has(ts.role)) {
+        return res.status(400).json({
+          error: `审批步骤 #${ts.step_index} 指定的用户在本公司没有"${ts.role}"角色`,
+        })
+      }
+      if (uid === initiatorId) {
+        return res.status(400).json({
+          error: `审批步骤 #${ts.step_index} 不能指定经办人本人作为审批人`,
+        })
+      }
+    }
+
     // v1.3.1: 清洁版处理
     if (reuseClean) {
       if (!contract.clean_storage_path) {
         return res.status(400).json({ error: '该合同没有可沿用的清洁版，请上传新清洁版' })
       }
-      if (req.file) await safeUnlink(req.file.path)  // 既然 reuse 就忽略上传的文件
+      if (req.file) await safeUnlink(req.file.path)
       savedAbsPath = null
     } else {
       if (!req.file) {
         return res.status(400).json({ error: '请上传清洁版文件' })
       }
     }
-
-    const initiatorId = contract.created_by
 
     // 把 tmp 文件搬到 clean/<contractId>/（事务前完成，事务里才写库）
     let newCleanStoragePath = null
@@ -321,7 +421,6 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
     }
 
     const result = await db.transaction(async (trx) => {
-      // 换了清洁版 → 同时清空旧摘要（让外面异步重新生成）
       if (newCleanStoragePath) {
         await trx('contracts').where({ id: contractId }).update({
           clean_filename: newCleanFilename,
@@ -340,27 +439,35 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
         initiator_id: initiatorId,
         status: 'pending',
         initiation_note: initiationNote ? String(initiationNote).trim() : null,
+        company_id: companyId,
       }, ['id'])
       const approvalId = approvalRow.id
 
-      const [step1Row] = await trx('approval_steps').insert({
-        approval_id: approvalId,
-        step_index: 1,
-        step_type: 'approver',
-        assignee_id: firstApproverId,
-        status: 'pending',
-      }, ['id'])
-
+      // 按模板生成主链：step_index = 1..N
+      let firstStepId = null
+      for (const ts of templateSteps) {
+        const [row] = await trx('approval_steps').insert({
+          approval_id: approvalId,
+          step_index: ts.step_index,
+          step_type: 'approver',
+          assignee_id: assignmentMap.get(ts.step_index),
+          status: 'pending',
+          company_id: companyId,
+        }, ['id'])
+        if (firstStepId === null) firstStepId = row.id
+      }
+      // 经办人最终节点
       await trx('approval_steps').insert({
         approval_id: approvalId,
         step_index: 999,
         step_type: 'final-initiator',
         assignee_id: initiatorId,
         status: 'pending',
+        company_id: companyId,
       })
 
       await trx('approvals').where({ id: approvalId }).update({
-        current_step_id: step1Row.id,
+        current_step_id: firstStepId,
       })
       await trx('contracts').where({ id: contractId }).update({
         status: 'approving',
@@ -371,25 +478,27 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
       await writeAction(trx, {
         approvalId, stepId: null, actorId: req.user.id,
         action: 'submit', comment: initiationNote || null,
+        payload: { templateId: template.id, assignments: [...assignmentMap].map(([i, u]) => ({ stepIndex: i, userId: u })) },
+        companyId,
       })
 
       // 通知第一审批人
+      const firstAssigneeId = assignmentMap.get(templateSteps[0].step_index)
       await sendApprovalNotice(trx, {
-        approvalId, senderId: req.user.id, recipientId: firstApproverId,
+        approvalId, senderId: req.user.id, recipientId: firstAssigneeId,
         body: buildNoticeBody({
           contract, action: 'submit',
           actorName: req.user.displayName || req.user.username,
           extra: initiationNote ? String(initiationNote).trim() : '',
         }),
+        companyId,
       })
 
-      return { approvalId, currentStepId: step1Row.id }
+      return { approvalId, currentStepId: firstStepId }
     })
 
-    // 删除旧清洁版（事务成功后清理）
     if (oldCleanAbsToRemove) await safeUnlink(oldCleanAbsToRemove)
 
-    // 摘要异步生成（换了清洁版 或 之前没生成过）
     if (newCleanStoragePath || !contract.summary) {
       generateContractSummary(contractId, contract.name)
         .then(async (summary) => {
@@ -406,7 +515,8 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
     await writeAudit({
       actorId: req.user.id, action: 'approval.submit',
       targetType: 'approval', targetId: result.approvalId,
-      payload: { contractId, firstApproverId, reuseClean, cleanReplaced: !!newCleanStoragePath },
+      payload: { contractId, templateId: template.id, reuseClean, cleanReplaced: !!newCleanStoragePath },
+      companyId: req.user.currentCompanyId,
     })
 
     res.status(201).json({ approvalId: result.approvalId })
@@ -416,14 +526,14 @@ r.post('/', cleanUpload.single('cleanFile'), async (req, res, next) => {
   }
 })
 
-// GET /api/approvals?role=todo|initiated|all — 列表
+// GET /api/approvals?role=todo|initiated|all — 列表（v2.0：按公司过滤）
 r.get('/', async (req, res, next) => {
   try {
     const role = req.query.role || 'todo'
     let q = joinApproval(db.select(APPROVAL_SELECT)).orderBy('a.updated_at', 'desc')
+    q = q.where('a.company_id', req.user.currentCompanyId)
 
     if (role === 'todo') {
-      // 待我审批：当前 step 的 assignee 是我，且 step.status=pending
       q = q
         .where('cs.assignee_id', req.user.id)
         .where('cs.status', 'pending')
@@ -431,8 +541,9 @@ r.get('/', async (req, res, next) => {
     } else if (role === 'initiated') {
       q = q.where('a.initiator_id', req.user.id)
     } else if (role === 'all') {
-      if (!isAdminOrAbove(req.user)) {
-        return res.status(403).json({ error: '需要管理员权限' })
+      // 公司管理员/法务能看本公司所有审批
+      if (!hasCompanyRole(req, 'manager') && !hasCompanyRole(req, 'legal')) {
+        return res.status(403).json({ error: '仅企业管理人员 / 法务岗可查看本公司全部审批' })
       }
     } else {
       return res.status(400).json({ error: '不支持的 role 参数' })
@@ -443,18 +554,96 @@ r.get('/', async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
-// GET /api/approvals/:id — 详情（含合同摘要 / 全部 steps / 全部 actions）
+// GET /api/approvals/template-preview?contractId=xxx
+//   v2.1: 发起审批前查询当前公司 active 模板 + 每步候选人
+//   返回 { template, steps: [{ stepIndex, role, stepLabel, candidates: [{userId, username, displayName}] }] }
+//   - 无 active 模板 → 412（让前端把错误展示出来，禁止发起）
+//   - 某角色在公司内没人 → candidates 为空，前端按需提示"联系超管补充人员"
+r.get('/template-preview', async (req, res, next) => {
+  try {
+    if (req.user.isAllCompaniesView) {
+      return res.status(400).json({ error: '"全部公司"模式不能发起审批，请先切换到具体公司' })
+    }
+    const { contractId } = req.query || {}
+    if (!contractId) return res.status(400).json({ error: '缺少 contractId 参数' })
+
+    const contract = await db('contracts').where({ id: contractId }).first()
+    if (!contract) return res.status(404).json({ error: '合同不存在' })
+    if (contract.company_id !== req.user.currentCompanyId) {
+      return res.status(403).json({ error: '该合同不属于当前公司' })
+    }
+
+    const template = await db('approval_templates')
+      .where({ company_id: req.user.currentCompanyId, is_active: true })
+      .first()
+    if (!template) {
+      return res.status(412).json({
+        error: '本公司尚未配置任何生效中的审批流模板，请联系平台超管在企业管理中配置',
+        templateMissing: true,
+      })
+    }
+
+    const steps = await db('approval_template_steps')
+      .where({ template_id: template.id })
+      .orderBy('step_index', 'asc')
+
+    const rolesNeeded = [...new Set(steps.map(s => s.role))]
+
+    // 一次性把模板里出现的角色对应的中文名拉出来（用于前端展示，不再依赖前端写死的 label）
+    const roleNameRows = rolesNeeded.length === 0 ? [] : await db('company_roles')
+      .where({ company_id: req.user.currentCompanyId })
+      .whereIn('key', rolesNeeded)
+      .select('key', 'name')
+    const roleNameByKey = new Map(roleNameRows.map(r => [r.key, r.name]))
+
+    // 候选人：当前公司有该角色且未软删除的用户
+    const candRows = rolesNeeded.length === 0 ? [] : await db('user_company_roles as ucr')
+      .innerJoin('users as u', 'ucr.user_id', 'u.id')
+      .whereNull('u.deleted_at')
+      .where('ucr.company_id', req.user.currentCompanyId)
+      .whereIn('ucr.role', rolesNeeded)
+      .select('ucr.role', 'u.id', 'u.username', 'u.display_name')
+      .orderBy('u.username', 'asc')
+
+    const candidatesByRole = new Map()
+    for (const r of rolesNeeded) candidatesByRole.set(r, [])
+    for (const c of candRows) {
+      candidatesByRole.get(c.role).push({
+        userId: c.id,
+        username: c.username,
+        displayName: c.display_name || null,
+      })
+    }
+
+    res.json({
+      template: {
+        id: template.id,
+        name: template.name,
+      },
+      steps: steps.map(s => ({
+        stepIndex: s.step_index,
+        role: s.role,
+        roleName: roleNameByKey.get(s.role) || s.role,
+        stepLabel: s.step_label || null,
+        candidates: candidatesByRole.get(s.role) || [],
+      })),
+    })
+  } catch (e) { next(e) }
+})
+
+// GET /api/approvals/:id — 详情
 r.get('/:id', async (req, res, next) => {
   try {
     const row = await joinApproval(db.select(APPROVAL_SELECT)).where('a.id', req.params.id).first()
     if (!row) return res.status(404).json({ error: '审批不存在' })
+    if (row.company_id !== req.user.currentCompanyId) {
+      return res.status(403).json({ error: '该审批不属于当前公司' })
+    }
 
-    const isAdmin = isAdminOrAbove(req.user)
+    const canSeeAll = hasCompanyRole(req, 'manager') || hasCompanyRole(req, 'legal')
     const isInitiator = row.initiator_id === req.user.id
-
-    // 还要看是不是 step 中的 assignee（历史或当前都算）
     const involved = await db('approval_steps').where({ approval_id: row.id, assignee_id: req.user.id }).first()
-    if (!isAdmin && !isInitiator && !involved) {
+    if (!canSeeAll && !isInitiator && !involved) {
       return res.status(403).json({ error: '无权查看该审批' })
     }
 
@@ -469,6 +658,20 @@ r.get('/:id', async (req, res, next) => {
       .orderBy([
         { column: 's.created_at', order: 'asc' },
       ])
+
+    // v2.1+: 给每个 step 附加 assignee 在本公司的角色（前端据此判断"是否到达印章管理员节点"）
+    const assigneeIds = [...new Set(steps.map(s => s.assignee_id).filter(Boolean))]
+    const roleMap = new Map()
+    if (assigneeIds.length > 0) {
+      const ucr = await db('user_company_roles')
+        .where({ company_id: row.company_id })
+        .whereIn('user_id', assigneeIds)
+        .select('user_id', 'role')
+      for (const r of ucr) {
+        if (!roleMap.has(r.user_id)) roleMap.set(r.user_id, [])
+        roleMap.get(r.user_id).push(r.role)
+      }
+    }
 
     const actions = await db('approval_actions as ac')
       .leftJoin('users as u', 'ac.actor_id', 'u.id')
@@ -489,7 +692,7 @@ r.get('/:id', async (req, res, next) => {
 
     res.json({
       approval: rowToApproval(row),
-      steps: steps.map(rowToStep),
+      steps: steps.map(s => ({ ...rowToStep(s), assigneeRoles: roleMap.get(s.assignee_id) || [] })),
       actions: actions.map(rowToAction),
       contract: {
         id: contract.id,
@@ -516,16 +719,16 @@ r.get('/:id', async (req, res, next) => {
 
 // ─── 通过 ─────────────────────────────────────────────────────────────────────
 // POST /api/approvals/:id/approve
-//   body: { comment, nextApprovers?: string[] }
-//   nextApprovers: 仅当当前步是 step_index=1（超管）且首次通过时必填
+//   body: { comment }
+//   v2.1: 模板驱动后所有审批人在发起时就具化完毕，通过不再需要 nextApprovers
 r.post('/:id/approve', async (req, res, next) => {
   try {
-    const { comment, nextApprovers } = req.body || {}
+    const { comment } = req.body || {}
     if (!comment || !String(comment).trim()) return res.status(400).json({ error: '请填写审批意见' })
 
-    const ctx = await loadActionContext(req.params.id, req.user.id)
+    const ctx = await loadActionContext(req.params.id, req.user.id, req.user.currentCompanyId)
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error })
-    const { approval, currentStep } = ctx
+    const { approval, currentStep, companyId } = ctx
 
     if (currentStep.step_type === 'consultee') {
       return res.status(400).json({ error: '加签节点不能"通过"，请使用"提交意见"' })
@@ -534,42 +737,12 @@ r.post('/:id/approve', async (req, res, next) => {
       return res.status(400).json({ error: '经办人节点应使用"上传用印版"完成流程' })
     }
 
+    let approvalIdForAudit = null
     await db.transaction(async (trx) => {
       const now = new Date()
       await trx('approval_steps').where({ id: currentStep.id }).update({
         status: 'approved', comment: String(comment).trim(), actioned_at: now,
       })
-
-      let payloadForAction = null
-
-      // 超管首次通过：创建后续审批人 steps
-      if (currentStep.step_index === 1) {
-        const list = Array.isArray(nextApprovers) ? nextApprovers : []
-        // 校验都是真实用户
-        if (list.length > 0) {
-          const users = await trx('users').select('id').whereIn('id', list)
-          const validIds = new Set(users.map(u => u.id))
-          for (const id of list) {
-            if (!validIds.has(id)) {
-              throw Object.assign(new Error('指定的后续审批人中存在无效用户'), { status: 400 })
-            }
-            if (id === approval.initiator_id) {
-              throw Object.assign(new Error('经办人会自动作为最后节点上传用印版，不需要重复加入审批链'), { status: 400 })
-            }
-          }
-          // 创建 step 2..N
-          for (let i = 0; i < list.length; i++) {
-            await trx('approval_steps').insert({
-              approval_id: approval.id,
-              step_index: 2 + i,
-              step_type: 'approver',
-              assignee_id: list[i],
-              status: 'pending',
-            })
-          }
-        }
-        payloadForAction = { nextApprovers: list }
-      }
 
       // 找下一步 current_step_id：
       //   1) 主链（step_type=approver）中 step_index 大于当前且 status=pending 的最小 step_index
@@ -601,10 +774,10 @@ r.post('/:id/approve', async (req, res, next) => {
 
       await writeAction(trx, {
         approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
-        action: 'approve', comment, payload: payloadForAction,
+        action: 'approve', comment,
+        companyId,
       })
 
-      // 通知下一节点 assignee
       const targetStep = await trx('approval_steps').where({ id: nextStepId }).first()
       const contract = await trx('contracts').where({ id: approval.contract_id }).first()
       await sendApprovalNotice(trx, {
@@ -617,12 +790,16 @@ r.post('/:id/approve', async (req, res, next) => {
           actorName: req.user.displayName || req.user.username,
           extra: comment,
         }),
+        companyId,
       })
+
+      approvalIdForAudit = approval.id
     })
 
     await writeAudit({
       actorId: req.user.id, action: 'approval.approve',
-      targetType: 'approval', targetId: approval.id,
+      targetType: 'approval', targetId: approvalIdForAudit,
+      companyId: req.user.currentCompanyId,
     })
     res.json({ ok: true })
   } catch (e) {
@@ -642,9 +819,9 @@ r.post('/:id/reject', async (req, res, next) => {
       return res.status(400).json({ error: 'mode 必须是 to_step 或 to_start' })
     }
 
-    const ctx = await loadActionContext(req.params.id, req.user.id)
+    const ctx = await loadActionContext(req.params.id, req.user.id, req.user.currentCompanyId)
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error })
-    const { approval, currentStep } = ctx
+    const { approval, currentStep, companyId } = ctx
 
     if (currentStep.step_type === 'consultee') {
       return res.status(400).json({ error: '加签节点不能驳回，请使用"提交意见"' })
@@ -670,15 +847,14 @@ r.post('/:id/reject', async (req, res, next) => {
         })
         await writeAction(trx, {
           approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
-          action: 'reject_to_start', comment,
+          action: 'reject_to_start', comment, companyId,
         })
-        // 通知经办人
         await sendApprovalNotice(trx, {
           approvalId: approval.id, senderId: req.user.id, recipientId: approval.initiator_id,
           body: buildNoticeBody({ contract, action: 'reject_to_start', actorName, extra: comment }),
+          companyId,
         })
       } else {
-        // to_step：流转到经办人节点等待重新提交
         const finalStep = await trx('approval_steps')
           .where({ approval_id: approval.id, step_type: 'final-initiator' })
           .first()
@@ -687,12 +863,12 @@ r.post('/:id/reject', async (req, res, next) => {
         })
         await writeAction(trx, {
           approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
-          action: 'reject_to_step', comment, targetStepId: currentStep.id,
+          action: 'reject_to_step', comment, targetStepId: currentStep.id, companyId,
         })
-        // 通知经办人
         await sendApprovalNotice(trx, {
           approvalId: approval.id, senderId: req.user.id, recipientId: approval.initiator_id,
           body: buildNoticeBody({ contract, action: 'reject_to_step', actorName, extra: comment }),
+          companyId,
         })
       }
     })
@@ -700,6 +876,7 @@ r.post('/:id/reject', async (req, res, next) => {
     await writeAudit({
       actorId: req.user.id, action: `approval.${mode === 'to_start' ? 'reject_to_start' : 'reject_to_step'}`,
       targetType: 'approval', targetId: approval.id,
+      companyId,
     })
     res.json({ ok: true })
   } catch (e) { next(e) }
@@ -714,9 +891,9 @@ r.post('/:id/add-consultee', async (req, res, next) => {
     if (!consulteeId) return res.status(400).json({ error: '请选择加签人' })
     if (!comment || !String(comment).trim()) return res.status(400).json({ error: '请填写加签说明' })
 
-    const ctx = await loadActionContext(req.params.id, req.user.id)
+    const ctx = await loadActionContext(req.params.id, req.user.id, req.user.currentCompanyId)
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error })
-    const { approval, currentStep } = ctx
+    const { approval, currentStep, companyId } = ctx
 
     if (currentStep.step_type !== 'approver') {
       return res.status(400).json({ error: '只能在审批节点加签' })
@@ -735,7 +912,8 @@ r.post('/:id/add-consultee', async (req, res, next) => {
         step_type: 'consultee',
         assignee_id: consulteeId,
         status: 'pending',
-        comment: String(comment).trim(),  // 加签理由先写在 comment 上
+        comment: String(comment).trim(),
+        company_id: companyId,
       }, ['id'])
 
       await trx('approvals').where({ id: approval.id }).update({
@@ -744,10 +922,9 @@ r.post('/:id/add-consultee', async (req, res, next) => {
 
       await writeAction(trx, {
         approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
-        action: 'add_consultee', comment, targetStepId: insertedRow.id,
+        action: 'add_consultee', comment, targetStepId: insertedRow.id, companyId,
       })
 
-      // 通知加签对象
       const contract = await trx('contracts').where({ id: approval.contract_id }).first()
       await sendApprovalNotice(trx, {
         approvalId: approval.id, senderId: req.user.id, recipientId: consulteeId,
@@ -756,6 +933,7 @@ r.post('/:id/add-consultee', async (req, res, next) => {
           actorName: req.user.displayName || req.user.username,
           extra: comment,
         }),
+        companyId,
       })
 
       return insertedRow.id
@@ -765,6 +943,7 @@ r.post('/:id/add-consultee', async (req, res, next) => {
       actorId: req.user.id, action: 'approval.add_consultee',
       targetType: 'approval', targetId: approval.id,
       payload: { consulteeId, consulteeStepId },
+      companyId,
     })
     res.json({ ok: true, consulteeStepId })
   } catch (e) { next(e) }
@@ -777,9 +956,9 @@ r.post('/:id/submit-consultation', async (req, res, next) => {
     const { comment } = req.body || {}
     if (!comment || !String(comment).trim()) return res.status(400).json({ error: '请填写意见' })
 
-    const ctx = await loadActionContext(req.params.id, req.user.id)
+    const ctx = await loadActionContext(req.params.id, req.user.id, req.user.currentCompanyId)
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error })
-    const { approval, currentStep } = ctx
+    const { approval, currentStep, companyId } = ctx
 
     if (currentStep.step_type !== 'consultee') {
       return res.status(400).json({ error: '该节点不是加签节点' })
@@ -797,9 +976,9 @@ r.post('/:id/submit-consultation', async (req, res, next) => {
       await writeAction(trx, {
         approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
         action: 'submit_consultation', comment, targetStepId: currentStep.parent_step_id,
+        companyId,
       })
 
-      // 通知加签人（控制权回到他）
       const parentStep = await trx('approval_steps').where({ id: currentStep.parent_step_id }).first()
       const contract = await trx('contracts').where({ id: approval.contract_id }).first()
       if (parentStep) {
@@ -810,6 +989,7 @@ r.post('/:id/submit-consultation', async (req, res, next) => {
             actorName: req.user.displayName || req.user.username,
             extra: comment,
           }),
+          companyId,
         })
       }
     })
@@ -817,6 +997,7 @@ r.post('/:id/submit-consultation', async (req, res, next) => {
     await writeAudit({
       actorId: req.user.id, action: 'approval.submit_consultation',
       targetType: 'approval', targetId: approval.id,
+      companyId,
     })
     res.json({ ok: true })
   } catch (e) { next(e) }
@@ -832,11 +1013,16 @@ r.post('/:id/resubmit', cleanUpload.single('cleanFile'), async (req, res, next) 
 
     const approval = await db('approvals').where({ id: req.params.id }).first()
     if (!approval) { if (savedAbsPath) await safeUnlink(savedAbsPath); return res.status(404).json({ error: '审批不存在' }) }
+    if (approval.company_id !== req.user.currentCompanyId) {
+      if (savedAbsPath) await safeUnlink(savedAbsPath)
+      return res.status(403).json({ error: '该审批不属于当前公司' })
+    }
     if (approval.status !== 'pending') { if (savedAbsPath) await safeUnlink(savedAbsPath); return res.status(400).json({ error: '审批不在进行中' }) }
     if (approval.initiator_id !== req.user.id) {
       if (savedAbsPath) await safeUnlink(savedAbsPath)
       return res.status(403).json({ error: '只有经办人可以重新提交' })
     }
+    const companyId = approval.company_id
     const currentStep = await db('approval_steps').where({ id: approval.current_step_id }).first()
     if (!currentStep || currentStep.step_type !== 'final-initiator') {
       if (savedAbsPath) await safeUnlink(savedAbsPath)
@@ -896,9 +1082,9 @@ r.post('/:id/resubmit', cleanUpload.single('cleanFile'), async (req, res, next) 
         approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
         action: 'resubmit', comment: comment ? String(comment).trim() : null,
         targetStepId: lastReject.target_step_id,
+        companyId,
       })
 
-      // 通知驳回的那个审批人
       const targetStep = await trx('approval_steps').where({ id: lastReject.target_step_id }).first()
       const contract = await trx('contracts').where({ id: approval.contract_id }).first()
       if (targetStep) {
@@ -909,6 +1095,7 @@ r.post('/:id/resubmit', cleanUpload.single('cleanFile'), async (req, res, next) 
             actorName: req.user.displayName || req.user.username,
             extra: comment ? String(comment).trim() : '',
           }),
+          companyId,
         })
       }
     })
@@ -932,6 +1119,7 @@ r.post('/:id/resubmit', cleanUpload.single('cleanFile'), async (req, res, next) 
       actorId: req.user.id, action: 'approval.resubmit',
       targetType: 'approval', targetId: approval.id,
       payload: { cleanReplaced: !!newCleanStoragePath },
+      companyId,
     })
     res.json({ ok: true })
   } catch (e) {
@@ -950,12 +1138,16 @@ r.post('/:id/upload-seal', sealUpload.single('file'), async (req, res, next) => 
 
     const approval = await db('approvals').where({ id: req.params.id }).first()
     if (!approval) { await safeUnlink(savedAbsPath); return res.status(404).json({ error: '审批不存在' }) }
+    if (approval.company_id !== req.user.currentCompanyId) {
+      await safeUnlink(savedAbsPath); return res.status(403).json({ error: '该审批不属于当前公司' })
+    }
     if (approval.status !== 'pending') {
       await safeUnlink(savedAbsPath); return res.status(400).json({ error: '审批不在进行中' })
     }
     if (approval.initiator_id !== req.user.id) {
       await safeUnlink(savedAbsPath); return res.status(403).json({ error: '只有经办人可以上传用印版' })
     }
+    const companyId = approval.company_id
     const currentStep = await db('approval_steps').where({ id: approval.current_step_id }).first()
     if (!currentStep || currentStep.step_type !== 'final-initiator') {
       await safeUnlink(savedAbsPath); return res.status(400).json({ error: '当前不在等待上传用印版的状态' })
@@ -979,6 +1171,18 @@ r.post('/:id/upload-seal', sealUpload.single('file'), async (req, res, next) => 
 
     const original = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
 
+    // v1.4: 用印日期由用户传入（必填），原"自动 now()"语义改为用户手填
+    const sealedAtRaw = String(req.body?.sealedAt || '').trim()
+    if (!sealedAtRaw || !/^\d{4}-\d{2}-\d{2}$/.test(sealedAtRaw)) {
+      await safeUnlink(savedAbsPath)
+      return res.status(400).json({ error: '请填写用印日期（格式 YYYY-MM-DD）' })
+    }
+    const sealedAt = new Date(sealedAtRaw)
+    if (isNaN(sealedAt.getTime())) {
+      await safeUnlink(savedAbsPath)
+      return res.status(400).json({ error: '用印日期无效' })
+    }
+
     await db.transaction(async (trx) => {
       const now = new Date()
       const storagePath = toStoragePath(savedAbsPath)
@@ -987,10 +1191,10 @@ r.post('/:id/upload-seal', sealUpload.single('file'), async (req, res, next) => 
         sealed_storage_path: storagePath,
         sealed_size_bytes: req.file.size,
         sealed_mime_type: req.file.mimetype,
-        sealed_at: now,
+        sealed_at: sealedAt,             // v1.4: 用户手填
         sealed_by: req.user.id,
         status: 'sealed',
-        approval_id: null,    // 流程结束，清当前活跃 approval 引用（历史在 approvals 表里）
+        approval_id: null,
         updated_at: now,
       })
       await trx('approval_steps').where({ id: currentStep.id }).update({
@@ -1004,14 +1208,16 @@ r.post('/:id/upload-seal', sealUpload.single('file'), async (req, res, next) => 
       await writeAction(trx, {
         approvalId: approval.id, stepId: currentStep.id, actorId: req.user.id,
         action: 'upload_seal', comment: req.body?.comment || null,
-        payload: { filename: original, size: req.file.size },
+        payload: { filename: original, size: req.file.size, sealedAt: sealedAtRaw },
+        companyId,
       })
     })
 
     await writeAudit({
       actorId: req.user.id, action: 'approval.upload_seal',
       targetType: 'approval', targetId: approval.id,
-      payload: { filename: original, size: req.file.size },
+      payload: { filename: original, size: req.file.size, sealedAt: sealedAtRaw },
+      companyId,
     })
     res.json({ ok: true })
   } catch (e) {
@@ -1020,10 +1226,180 @@ r.post('/:id/upload-seal', sealUpload.single('file'), async (req, res, next) => 
   }
 })
 
-// ─── 工具：加载操作上下文（校验 approval 存在 + 当前步骤 + assignee 是当前用户） ──
-async function loadActionContext(approvalId, userId) {
+// ─── v2.1+: 一键导出"用印水印版" PDF ─────────────────────────────────────────
+//
+// GET /api/approvals/:id/export-watermark-pdf
+//   - 权限：当前公司 seal_admin 或该审批的经办人
+//   - 流程：合同 clean 版 Word → LibreOffice 转 PDF → pdf-lib 加公司全称水印 → 流式返回
+//   - 环境：服务器需装 LibreOffice（`apt install libreoffice`）+ 中文字体（`apt install fonts-wqy-zenhei`）
+//     LibreOffice 路径走 env LIBREOFFICE_PATH（默认 'soffice'，Windows 上默认装在 Program Files\LibreOffice）
+//     字体路径走 env WATERMARK_FONT_PATH，缺省会按平台尝试常见路径（TTF/OTF/TTC 均可）
+
+function resolveLibreOfficePath() {
+  if (process.env.LIBREOFFICE_PATH) return process.env.LIBREOFFICE_PATH
+  if (process.platform === 'win32') {
+    return 'C:\\Program Files\\LibreOffice\\program\\soffice.exe'
+  }
+  return 'soffice'
+}
+
+// 注意：pdf-lib(fontkit) 只能嵌入「单体」.ttf / .otf 字体；
+//   .ttc / .otc 字体集合会直接报错（createSubset / font.layout is not a function），不可用。
+//   所以候选里只放单体字体，并避开微软雅黑(msyh.ttc)、宋体(simsun.ttc)、文泉驿(wqy-zenhei.ttc) 等集合字体。
+async function resolveWatermarkFontBytes() {
+  const candidates = process.env.WATERMARK_FONT_PATH
+    ? [process.env.WATERMARK_FONT_PATH]
+    : (process.platform === 'win32'
+      ? [
+          'C:\\Windows\\Fonts\\simhei.ttf',   // 黑体（单体）
+          'C:\\Windows\\Fonts\\simkai.ttf',   // 楷体（单体）
+          'C:\\Windows\\Fonts\\simfang.ttf',  // 仿宋（单体）
+        ]
+      : [
+          '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf', // fonts-droid-fallback（单体，全 CJK）
+          '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf',
+          '/usr/share/fonts/truetype/arphic/ukai.ttc',                 // 仅作最后兜底（实际是 .ttc，可能不可用）
+        ])
+  let lastErr = null
+  for (const p of candidates) {
+    try {
+      const ext = (p.split('.').pop() || '').toLowerCase()
+      if (ext === 'ttc' || ext === 'otc') continue   // 集合字体跳过，pdf-lib 不支持
+      return await fs.readFile(p)
+    } catch (e) { lastErr = e /* try next */ }
+  }
+  throw Object.assign(new Error(
+    '找不到可用的中文字体（需要单体 .ttf/.otf，不支持 .ttc 字体集合）。' +
+    '请在 .env 设置 WATERMARK_FONT_PATH 指向一个单体中文字体；Linux 服务器可 apt install fonts-droid-fallback。' +
+    (lastErr ? `（最后错误：${lastErr.message}）` : '')
+  ), { status: 500 })
+}
+
+r.get('/:id/export-watermark-pdf', async (req, res, next) => {
+  let tmpDir = null
+  try {
+    // 1. 鉴权
+    const approval = await db('approvals').where({ id: req.params.id }).first()
+    if (!approval) return res.status(404).json({ error: '审批不存在' })
+    if (approval.company_id !== req.user.currentCompanyId) {
+      return res.status(403).json({ error: '该审批不属于当前公司' })
+    }
+    const isSealAdmin = hasCompanyRole(req, 'seal_admin')
+    const isInitiator = approval.initiator_id === req.user.id
+    if (!isSealAdmin && !isInitiator) {
+      return res.status(403).json({ error: '仅印章管理员或本审批的经办人可导出用印水印版' })
+    }
+
+    // 2. 取清洁版 + 公司名
+    const contract = await db('contracts').where({ id: approval.contract_id }).first()
+    if (!contract) return res.status(404).json({ error: '合同不存在' })
+    if (!contract.clean_storage_path) {
+      return res.status(400).json({ error: '该合同尚未上传清洁版文件，无法导出水印版' })
+    }
+    const cleanAbs = toAbsolutePath(contract.clean_storage_path)
+    try { await fs.access(cleanAbs) } catch {
+      return res.status(404).json({ error: '清洁版文件已丢失，请联系经办人重新上传' })
+    }
+
+    const company = await db('companies').where({ id: approval.company_id }).first()
+    if (!company) return res.status(404).json({ error: '公司不存在' })
+    const watermarkText = company.name
+
+    // 3. LibreOffice 转 PDF（临时目录）
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watermark-'))
+    const sofficeBin = resolveLibreOfficePath()
+    // 独立 user profile，避免与本机其他 LibreOffice 实例的 profile 锁冲突导致转换失败
+    const profileUrl = pathToFileURL(path.join(tmpDir, 'lo-profile')).href
+    try {
+      await execFileP(sofficeBin, [
+        '-env:UserInstallation=' + profileUrl,
+        '--headless',
+        '--convert-to', 'pdf',
+        '--outdir', tmpDir,
+        cleanAbs,
+      ], { timeout: 90_000 })
+    } catch (e) {
+      console.error('[watermark] libreoffice convert failed:', e?.message || e)
+      throw Object.assign(new Error(
+        'Word → PDF 转换失败：' + (e?.code === 'ENOENT'
+          ? '未找到 LibreOffice，请在服务器安装（apt install libreoffice）或设置 LIBREOFFICE_PATH 环境变量'
+          : (e?.message || '未知错误'))
+      ), { status: 500 })
+    }
+
+    // LibreOffice 输出文件名 = <原文件名去扩展名>.pdf
+    const baseName = path.parse(cleanAbs).name
+    const pdfPath = path.join(tmpDir, `${baseName}.pdf`)
+    let pdfBytes
+    try { pdfBytes = await fs.readFile(pdfPath) }
+    catch {
+      throw Object.assign(new Error('LibreOffice 转换完成但找不到输出 PDF 文件'), { status: 500 })
+    }
+
+    // 4. pdf-lib 加水印
+    const pdfDoc = await PDFDocument.load(pdfBytes)
+    pdfDoc.registerFontkit(fontkit)
+    const fontBytes = await resolveWatermarkFontBytes()
+    const font = await pdfDoc.embedFont(fontBytes, { subset: true })
+
+    const FONT_SIZE = 48
+    const ANGLE = 45
+    const OPACITY = 0.12
+    const COLOR = rgb(0.5, 0.5, 0.5)
+    const STEP_X = 320
+    const STEP_Y = 220
+
+    const pages = pdfDoc.getPages()
+    for (const page of pages) {
+      const { width, height } = page.getSize()
+      // 旋转后水印会跑出可见区域，所以在 (-width..2*width, -height..2*height) 网格上铺
+      for (let y = -height; y < height * 2; y += STEP_Y) {
+        for (let x = -width; x < width * 2; x += STEP_X) {
+          page.drawText(watermarkText, {
+            x, y,
+            size: FONT_SIZE,
+            font,
+            color: COLOR,
+            opacity: OPACITY,
+            rotate: degrees(ANGLE),
+          })
+        }
+      }
+    }
+
+    const out = await pdfDoc.save()
+
+    // 5. 返回流
+    const fname = `${contract.code}_${contract.name}_用印版.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`)
+    res.send(Buffer.from(out))
+
+    await writeAudit({
+      actorId: req.user.id, action: 'approval.export_watermark_pdf',
+      targetType: 'approval', targetId: approval.id,
+      payload: { contractCode: contract.code, contractName: contract.name },
+      companyId: req.user.currentCompanyId,
+    })
+  } catch (e) {
+    if (!res.headersSent) {
+      if (e?.status) return res.status(e.status).json({ error: e.message })
+      next(e)
+    } else {
+      console.error('[watermark] error after headers sent:', e?.message || e)
+    }
+  } finally {
+    if (tmpDir) {
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+})
+
+// ─── 工具：加载操作上下文（v2.0: 校验 approval 存在 + 公司归属 + 当前步骤 + assignee）─
+async function loadActionContext(approvalId, userId, currentCompanyId) {
   const approval = await db('approvals').where({ id: approvalId }).first()
   if (!approval) return { error: '审批不存在', status: 404 }
+  if (approval.company_id !== currentCompanyId) return { error: '该审批不属于当前公司', status: 403 }
   if (approval.status !== 'pending') return { error: '审批不在进行中', status: 400 }
   if (!approval.current_step_id) return { error: '审批没有当前步骤（已结束）', status: 400 }
 
@@ -1032,7 +1408,7 @@ async function loadActionContext(approvalId, userId) {
   if (currentStep.assignee_id !== userId) return { error: '当前步骤不归你处理', status: 403 }
   if (currentStep.status !== 'pending') return { error: '当前步骤已被处理过', status: 400 }
 
-  return { approval, currentStep }
+  return { approval, currentStep, companyId: approval.company_id }
 }
 
 export default r

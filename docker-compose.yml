@@ -10,9 +10,10 @@ services:
     volumes:
       - ./pgdata:/var/lib/postgresql/data
     ports:
-      # 宿主机用 5433（5432 在 Windows Hyper-V/WSL 保留段 5358-5457 内会被拒绝）
-      # 容器内还是 5432，应用连 127.0.0.1:5433 即可
-      - "127.0.0.1:5500:5432"
+      # 宿主机用 15432（远超 Windows Hyper-V/WSL 动态保留段，最稳）
+      # 容器内仍是 5432；应用连 127.0.0.1:15432
+      # 之前用过 5432 → 在保留段；5500 → 也在保留段；最终选 15432
+      - "127.0.0.1:15432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-case_mgmt} -d ${PG_DB:-case_mgmt}"]
       interval: 5s

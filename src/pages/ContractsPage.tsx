@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import {
   FolderOpen, FileText, Sparkles, Download, Search, ChevronRight, ArrowLeft,
   RefreshCw, Calendar, User as UserIcon, FileCheck, ChevronDown, ChevronUp, CheckSquare,
+  FileSpreadsheet, Filter, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { contractsApi } from '@/api/contracts'
+import { contractsApi, type ContractMeta } from '@/api/contracts'
 import { reviewsApi } from '@/api/reviews'
 import { downloadSealedContract } from '@/api/approvals'
 import { ReviewOpinionsView } from '@/components/reviews/ReviewOpinionsView'
@@ -26,6 +27,19 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
   const [error, setError] = useState<string | null>(null)
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  // v1.4 高级筛选
+  const [meta, setMeta] = useState<ContractMeta | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+  const [contractTypeFilter, setContractTypeFilter] = useState<string>('')
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>('')
+  const [partyKeyword, setPartyKeyword] = useState<string>('')
+  const [handlerKeyword, setHandlerKeyword] = useState<string>('')
+  const [amountMin, setAmountMin] = useState<string>('')
+  const [amountMax, setAmountMax] = useState<string>('')
+  const [termDateBefore, setTermDateBefore] = useState<string>('')
+  const [sortField, setSortField] = useState<'updatedAt' | 'createdAt' | 'termDate' | 'contractAmount' | 'name'>('updatedAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [exporting, setExporting] = useState(false)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ContractRecord | null>(null)
@@ -65,17 +79,86 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
   }
 
   useEffect(() => { loadList() }, [])
+  useEffect(() => { contractsApi.meta().then(setMeta).catch(() => {}) }, [])
+
+  function activeFilterCount() {
+    let n = 0
+    if (contractTypeFilter) n++
+    if (paymentTypeFilter) n++
+    if (partyKeyword.trim()) n++
+    if (handlerKeyword.trim()) n++
+    if (amountMin || amountMax) n++
+    if (termDateBefore) n++
+    return n
+  }
+
+  function clearAllFilters() {
+    setContractTypeFilter('')
+    setPaymentTypeFilter('')
+    setPartyKeyword('')
+    setHandlerKeyword('')
+    setAmountMin('')
+    setAmountMax('')
+    setTermDateBefore('')
+  }
 
   const filtered = contracts.filter(c => {
     if (statusFilter !== 'all' && c.status !== statusFilter) return false
     if (keyword.trim()) {
       const k = keyword.trim().toLowerCase()
-      return c.name.toLowerCase().includes(k) ||
+      const ok = c.name.toLowerCase().includes(k) ||
         (c.code || '').toLowerCase().includes(k) ||
         (c.description || '').toLowerCase().includes(k)
+      if (!ok) return false
     }
+    if (contractTypeFilter && c.contractType !== contractTypeFilter) return false
+    if (paymentTypeFilter && c.paymentType !== paymentTypeFilter) return false
+    if (partyKeyword.trim()) {
+      const k = partyKeyword.trim().toLowerCase()
+      const inOurs = (c.ourParties || []).some(p => p.toLowerCase().includes(k))
+      const inCounters = (c.counterParties || []).some(p => p.toLowerCase().includes(k))
+      if (!inOurs && !inCounters) return false
+    }
+    if (handlerKeyword.trim()) {
+      const k = handlerKeyword.trim().toLowerCase()
+      const inHandler = (c.handlerDisplayName || '').toLowerCase().includes(k) ||
+        (c.handlerUsername || '').toLowerCase().includes(k)
+      if (!inHandler) return false
+    }
+    if (amountMin && c.contractAmount != null && c.contractAmount < Number(amountMin)) return false
+    if (amountMax && c.contractAmount != null && c.contractAmount > Number(amountMax)) return false
+    if (termDateBefore && c.termDate && c.termDate > termDateBefore) return false
     return true
+  }).sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    const va = (a as any)[sortField] ?? ''
+    const vb = (b as any)[sortField] ?? ''
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
+    return String(va).localeCompare(String(vb), 'zh-CN') * dir
   })
+
+  async function doExport(mode: 'filtered' | 'all') {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      params.set('mode', mode)
+      if (mode === 'filtered') {
+        if (statusFilter !== 'all') params.set('filter[status][op]', 'in'), params.append('filter[status][values][]', statusFilter)
+        if (keyword.trim()) { params.set('filter[name][op]', 'contains'); params.set('filter[name][value]', keyword.trim()) }
+        if (contractTypeFilter) { params.set('filter[contractType][op]', 'in'); params.append('filter[contractType][values][]', contractTypeFilter) }
+        if (paymentTypeFilter) { params.set('filter[paymentType][op]', 'in'); params.append('filter[paymentType][values][]', paymentTypeFilter) }
+        if (amountMin) { params.set('filter[contractAmount][op]', 'gt'); params.set('filter[contractAmount][value]', amountMin) }
+        if (amountMax) { params.set('filter[contractAmount][op]', 'lt'); params.set('filter[contractAmount][value]', amountMax) }
+        if (termDateBefore) { params.set('filter[termDate][op]', 'before'); params.set('filter[termDate][value]', termDateBefore) }
+      }
+      params.set('sort', `${sortField}:${sortDir}`)
+      await contractsApi.exportXlsx(params.toString())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const counts = {
     all:           contracts.length,
@@ -274,11 +357,89 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
               className="rounded border border-slate-200 pl-7 pr-2.5 py-1 text-xs w-48 focus:outline-none focus:border-primary-400"
             />
           </div>
+          <Button variant="outline" size="sm" icon={<Filter size={12} />} onClick={() => setShowFilters(v => !v)}>
+            高级筛选{activeFilterCount() > 0 && <span className="ml-1 px-1 rounded bg-primary-100 text-primary-700 text-[10px]">{activeFilterCount()}</span>}
+          </Button>
+          <ExportButton onPickMode={doExport} loading={exporting} />
           <Button variant="outline" size="sm" icon={<RefreshCw size={12} />} onClick={loadList}>
             刷新
           </Button>
         </div>
       </header>
+
+      {/* v1.4 高级筛选面板 */}
+      {showFilters && (
+        <div className="border-b border-slate-200 bg-slate-50/50 px-6 py-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
+            <div>
+              <label className="block text-slate-500 mb-0.5">合同类型</label>
+              <select value={contractTypeFilter} onChange={e => setContractTypeFilter(e.target.value)}
+                className="form-select w-full">
+                <option value="">全部</option>
+                {(meta?.contractTypes || []).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">收付款类型</label>
+              <select value={paymentTypeFilter} onChange={e => setPaymentTypeFilter(e.target.value)}
+                className="form-select w-full">
+                <option value="">全部</option>
+                {(meta?.paymentTypes || []).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">签署主体（我方/对方包含）</label>
+              <input value={partyKeyword} onChange={e => setPartyKeyword(e.target.value)}
+                className="form-input w-full" placeholder="主体关键词" />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">经办人（包含）</label>
+              <input value={handlerKeyword} onChange={e => setHandlerKeyword(e.target.value)}
+                className="form-input w-full" placeholder="经办人姓名" />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">金额下限</label>
+              <input type="number" min="0" value={amountMin} onChange={e => setAmountMin(e.target.value)}
+                className="form-input w-full" placeholder="例 10000" />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">金额上限</label>
+              <input type="number" min="0" value={amountMax} onChange={e => setAmountMax(e.target.value)}
+                className="form-input w-full" placeholder="例 500000" />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">到期日期 ≤</label>
+              <input type="date" value={termDateBefore} onChange={e => setTermDateBefore(e.target.value)}
+                className="form-input w-full" />
+            </div>
+            <div>
+              <label className="block text-slate-500 mb-0.5">排序</label>
+              <div className="flex gap-1">
+                <select value={sortField} onChange={e => setSortField(e.target.value as typeof sortField)} className="form-select flex-1">
+                  <option value="updatedAt">最近更新</option>
+                  <option value="createdAt">创建时间</option>
+                  <option value="termDate">到期日期</option>
+                  <option value="contractAmount">金额</option>
+                  <option value="name">名称</option>
+                </select>
+                <button type="button" onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                  className="px-2 rounded border border-slate-200 bg-white hover:bg-slate-50">
+                  {sortDir === 'asc' ? '升序↑' : '降序↓'}
+                </button>
+              </div>
+            </div>
+          </div>
+          {activeFilterCount() > 0 && (
+            <div className="mt-2 flex items-center gap-2 text-[11px]">
+              <span className="text-slate-500">已应用 {activeFilterCount()} 项筛选</span>
+              <button onClick={clearAllFilters}
+                className="inline-flex items-center gap-0.5 text-slate-400 hover:text-red-600">
+                <X size={10} />清空全部
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 状态筛选 tabs */}
       <div className="flex border-b border-slate-200 bg-white px-4 overflow-x-auto">
@@ -373,6 +534,37 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── v1.4 导出按钮（带下拉选择导出范围） ─────────────────────────────────────
+function ExportButton({ onPickMode, loading }: {
+  onPickMode: (mode: 'filtered' | 'all') => void
+  loading: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative">
+      <Button variant="outline" size="sm" icon={<FileSpreadsheet size={12} />}
+        onClick={() => setOpen(v => !v)} disabled={loading}>
+        {loading ? '导出中…' : '导出 Excel'}
+      </Button>
+      {open && !loading && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-30 min-w-[180px] rounded-lg bg-white shadow-lg border border-slate-200 overflow-hidden">
+            <button onClick={() => { setOpen(false); onPickMode('filtered') }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50">
+              导出当前筛选结果
+            </button>
+            <button onClick={() => { setOpen(false); onPickMode('all') }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-t border-slate-100">
+              导出全部合同
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

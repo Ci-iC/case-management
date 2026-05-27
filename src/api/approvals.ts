@@ -1,5 +1,30 @@
 import { apiFetch, apiFetchForm, downloadFile } from './client'
 import type { ApprovalRecord, ApprovalDetail } from '@/types'
+import type { TemplateStepRole } from './companies'
+
+// v2.1: 发起审批前查询当前公司 active 模板及候选人
+export interface TemplatePreviewCandidate {
+  userId: string
+  username: string
+  displayName?: string | null
+}
+export interface TemplatePreviewStep {
+  stepIndex: number
+  role: TemplateStepRole
+  /** v2.1+: 后端返回的角色中文名（含自定义角色） */
+  roleName?: string
+  stepLabel?: string | null
+  candidates: TemplatePreviewCandidate[]
+}
+export interface TemplatePreview {
+  template: { id: string; name: string }
+  steps: TemplatePreviewStep[]
+}
+
+export interface StepAssignment {
+  stepIndex: number
+  userId: string
+}
 
 export const approvalsApi = {
   /** 列表：role=todo（待我审批）/ initiated（我发起的）/ all（admin/superadmin 看全部） */
@@ -11,25 +36,33 @@ export const approvalsApi = {
     return apiFetch<ApprovalDetail>(`/api/approvals/${id}`)
   },
 
-  /** 经办人发起审批：v1.3.1 起需要清洁版（reuseExistingClean=true 时沿用现有清洁版，否则必须传 cleanFile） */
+  /** v2.1: 发起审批前预览当前公司 active 模板（含每步候选人） */
+  templatePreview(contractId: string) {
+    return apiFetch<TemplatePreview>(`/api/approvals/template-preview?contractId=${encodeURIComponent(contractId)}`)
+  },
+
+  /** 经办人发起审批：
+   *  v1.3.1 起需要清洁版（reuseExistingClean=true 时沿用现有清洁版，否则必须传 cleanFile）
+   *  v2.1 起改由模板驱动：stepAssignments 必须覆盖模板里所有步骤
+   */
   initiate(payload: {
     contractId: string
-    firstApproverId: string
+    stepAssignments: StepAssignment[]
     initiationNote?: string
     reuseExistingClean?: boolean
     cleanFile?: File
   }) {
     const form = new FormData()
     form.append('contractId', payload.contractId)
-    form.append('firstApproverId', payload.firstApproverId)
+    form.append('stepAssignments', JSON.stringify(payload.stepAssignments))
     if (payload.initiationNote) form.append('initiationNote', payload.initiationNote)
     if (payload.reuseExistingClean) form.append('reuseExistingClean', 'true')
     if (payload.cleanFile) form.append('cleanFile', payload.cleanFile)
     return apiFetchForm<{ approvalId: string }>('/api/approvals', form)
   },
 
-  /** 通过：超管首次通过时必传 nextApprovers */
-  approve(approvalId: string, payload: { comment: string; nextApprovers?: string[] }) {
+  /** 通过（v2.1：模板驱动后不再需要 nextApprovers） */
+  approve(approvalId: string, payload: { comment: string }) {
     return apiFetch<{ ok: true }>(`/api/approvals/${approvalId}/approve`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -68,10 +101,12 @@ export const approvalsApi = {
     return apiFetchForm<{ ok: true }>(`/api/approvals/${approvalId}/resubmit`, form)
   },
 
-  /** 经办人上传用印版（流程结束 → contract.status='sealed'） */
-  uploadSeal(approvalId: string, file: File, comment?: string) {
+  /** 经办人上传用印版（流程结束 → contract.status='sealed'）
+   *  v1.4: sealedAt 必填（YYYY-MM-DD，用户手填用印日期） */
+  uploadSeal(approvalId: string, file: File, sealedAt: string, comment?: string) {
     const form = new FormData()
     form.append('file', file)
+    form.append('sealedAt', sealedAt)
     if (comment) form.append('comment', comment)
     return apiFetchForm<{ ok: true }>(`/api/approvals/${approvalId}/upload-seal`, form)
   },
@@ -80,6 +115,11 @@ export const approvalsApi = {
 /** 用印版下载（在合同台账已签署区） */
 export function downloadSealedContract(contractId: string, filename: string) {
   return downloadFile(`/api/contracts/${contractId}/sealed-file`, filename)
+}
+
+/** v2.1+: 用印水印版 PDF（合同清洁版 → LibreOffice 转 PDF → pdf-lib 加公司全称水印） */
+export function downloadWatermarkPdf(approvalId: string, filename: string) {
+  return downloadFile(`/api/approvals/${approvalId}/export-watermark-pdf`, filename)
 }
 
 /** v1.3.1: 清洁版下载（审批界面 / 合同台账详情主显示） */

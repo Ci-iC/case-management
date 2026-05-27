@@ -6,7 +6,7 @@ import { reviewsApi } from '@/api/reviews'
 import { contractsApi } from '@/api/contracts'
 import { useCaseStore } from '@/store/useCaseStore'
 import { useAuthStore } from '@/store/useAuthStore'
-import { isAdminOrAbove } from '@/api/auth'
+import { canSeeCases } from '@/api/auth'
 import { ApiError } from '@/api/client'
 import type { Contact, ReviewRecord, ContractRecord } from '@/types'
 
@@ -23,7 +23,6 @@ interface Props {
 export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, prefillCaseId }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [receiverId, setReceiverId] = useState<string>('')
-  const [receiverLabel, setReceiverLabel] = useState<string>('')
   const [body, setBody] = useState('')
   const [caseId, setCaseId] = useState<string>('')
   const [attachments, setAttachments] = useState<File[]>([])
@@ -38,18 +37,12 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
 
   const cases = useCaseStore(s => s.cases)
   const me = useAuthStore(s => s.user)
-  const isAdminish = isAdminOrAbove(me)
-  const canViewCases = !!me?.canViewCases || isAdminish
+  const canViewCases = canSeeCases(me)
 
-  // 收件人锁定策略（lockReceiver）：
-  //   - 合同审核「发送给法务审核」（prefillReview 非空时）→ 不管你是谁，都锁定到 superadmin
-  //   - 普通发消息时：
-  //       · admin / superadmin（isAdminish=true）→ 可自由选收件人
-  //       · 普通 user → 收件人固定（业务方→法务方向，对应消息中心不让普通用户随便发给同事）
-  // v1.3.2 起：法务严格等于 superadmin。admin 是高管/业务方，但发普通消息这条路径保持
-  //   "admin 可自由选收件人" 不变（admin 作为高管偶尔需要联系除法务外的其他人）。
-  const lockReceiver = !!prefillReview || !isAdminish
+  // v2.0：合同审核「发送给法务审核」时不再锁定收件人，而是过滤为本公司法务岗用户让用户选。
   const isLegalSubmission = !!prefillReview
+  // v2.1+: 法务本人也能把审核提交给自己（自己审自己）
+  const meIsLegal = (me?.companyRoles || []).includes('legal')
 
   // 重置 + 加载联系人
   useEffect(() => {
@@ -66,20 +59,14 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
     messagesApi.contacts()
       .then(({ contacts }) => {
         setContacts(contacts)
-        if (lockReceiver) {
-          // v1.3.2: 法务严格等于 superadmin。admin 是高管/业务方角色，不再回退到 admin
-          // 系统保证至少有一个 superadmin（用户管理接口不允许删最后一个），所以下面通常能命中
-          const firstLegal = contacts.find(c => c.role === 'superadmin')
-          if (firstLegal) {
-            setReceiverId(firstLegal.id)
-            setReceiverLabel(firstLegal.displayName || firstLegal.username)
-          } else {
-            setError('系统中没有可用的法务（超级管理员）账号，请联系系统管理员')
+        // v2.0：不再自动锁定收件人。发送给法务审核场景由下拉过滤为法务岗用户，用户手动选。
+        setReceiverId('')
+        if (isLegalSubmission) {
+          // 算上"自己"（如果当前用户本身是法务）
+          const legalCount = contacts.filter(c => (c.roles || []).includes('legal')).length + (meIsLegal ? 1 : 0)
+          if (legalCount === 0) {
+            setError('本公司没有可用的法务岗用户，请联系平台超管分配')
           }
-        } else {
-          // admin 可选收件人，默认空
-          setReceiverId('')
-          setReceiverLabel('')
         }
       })
       .catch(e => setError(e instanceof Error ? e.message : '加载联系人失败'))
@@ -90,7 +77,7 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
         .then(({ contracts }) => setContracts(contracts))
         .catch(e => console.error('加载已有合同失败', e))
     }
-  }, [open, prefillReview, prefillCaseId, lockReceiver])
+  }, [open, prefillReview, prefillCaseId, isLegalSubmission, meIsLegal])
 
   function buildPrefillBody(r: ReviewRecord): string {
     return `麻烦帮忙审核一下「${r.uploadedFilename}」。\n\nAI 已经过了一遍，意见见下方折叠区。我自己想要你再确认的点：\n（请补充）`
@@ -110,7 +97,7 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
 
   async function onSubmit() {
     if (!receiverId) {
-      setError(lockReceiver ? '系统中没有可用的法务账号，请联系管理员' : '请选择收件人')
+      setError(isLegalSubmission ? '请选择法务岗收件人' : '请选择收件人')
       return
     }
     if (!body.trim()) { setError('请填写留言'); return }
@@ -240,26 +227,36 @@ export function ComposeMessageDialog({ open, onClose, onSent, prefillReview, pre
           )}
 
           {/* 收件人 */}
-          <Field label="收件人">
-            {lockReceiver ? (
-              <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                <span>📧 法务{receiverLabel ? ` · ${receiverLabel}` : ''}</span>
-                <span className="ml-auto text-[10px] text-slate-400">系统固定收件人</span>
-              </div>
-            ) : (
-              <select
-                className="form-select"
-                value={receiverId}
-                onChange={e => setReceiverId(e.target.value)}
-              >
-                <option value="">请选择…</option>
-                {contacts.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.displayName || c.username}（{c.username}）
-                    {c.role === 'superadmin' ? ' · 超级管理员' : c.role === 'admin' ? ' · 管理员' : ''}
-                  </option>
-                ))}
-              </select>
+          <Field label={isLegalSubmission ? '法务岗收件人' : '收件人'}>
+            <select
+              className="form-select"
+              value={receiverId}
+              onChange={e => setReceiverId(e.target.value)}
+            >
+              <option value="">{isLegalSubmission ? '请选择法务岗用户…' : '请选择…'}</option>
+              {/* v2.1+: 法务本人可把审核提交给自己 */}
+              {isLegalSubmission && meIsLegal && me && (
+                <option value={me.id}>
+                  {me.displayName || me.username}（{me.username}） · 法务岗 · 我自己
+                </option>
+              )}
+              {contacts
+                .filter(c => isLegalSubmission ? (c.roles || []).includes('legal') : true)
+                .map(c => {
+                  const roleLabels: Record<string, string> = {
+                    manager: '企业管理人员', legal: '法务岗', seal_admin: '印章管理',
+                    finance: '财务人员', staff: '普通员工',
+                  }
+                  const rolesText = (c.roles || []).map(r => roleLabels[r] || r).join(' · ')
+                  return (
+                    <option key={c.id} value={c.id}>
+                      {c.displayName || c.username}（{c.username}）{rolesText ? ` · ${rolesText}` : ''}
+                    </option>
+                  )
+                })}
+            </select>
+            {isLegalSubmission && (
+              <p className="mt-1 text-[11px] text-slate-400">仅显示本公司「法务岗」角色的用户</p>
             )}
           </Field>
 
