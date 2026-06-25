@@ -348,6 +348,8 @@ export interface ApprovalRecord {
   currentAssigneeId: string | null
   currentAssigneeUsername?: string | null
   currentAssigneeDisplayName?: string | null
+  /** v2.4+: 当前节点种类 seal=用印 / upload_scan=上传盖章扫描件 / approve=普通审批 */
+  currentNodeKind?: 'seal' | 'upload_scan' | 'approve'
   createdAt: string
   updatedAt: string
   completedAt: string | null
@@ -360,10 +362,14 @@ export interface ApprovalStep {
   stepIndex: number | null
   parentStepId: string | null
   stepType: ApprovalStepType
+  /** v2.4+: 固化的节点角色（legal/finance/manager/seal_admin/自定义）；经办人最终节点为 null */
+  stepRole?: string | null
+  /** v2.4+: 固化的节点中文标签（如"财务审批""用印""上传盖章扫描件"） */
+  stepLabel?: string | null
   assigneeId: string
   assigneeUsername?: string
   assigneeDisplayName?: string
-  /** v2.1+: 该步骤处理人在本公司的角色（用于判断是否到达印章管理员节点） */
+  /** 该步骤处理人在本公司的角色（仅供展示参考；节点是否为用印一律以 stepRole 为准，不看处理人身份） */
   assigneeRoles?: string[]
   status: ApprovalStepStatus
   comment: string | null

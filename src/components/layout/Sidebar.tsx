@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, FileSearch, FolderOpen, CheckSquare, Mail, KeyRound } from 'lucide-react'
+import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, FileSearch, FolderOpen, CheckSquare, Mail, KeyRound, FileSignature, Bot } from 'lucide-react'
 import { messagesApi } from '@/api/messages'
 import { cn } from '@/utils/helpers'
 import { NAV_ITEMS } from '@/constants'
@@ -9,7 +9,7 @@ import { ChangePasswordModal } from '@/components/auth/ChangePasswordModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
-  Briefcase, Calendar, BarChart2, Settings, FileSearch, FolderOpen, CheckSquare,
+  Briefcase, Calendar, BarChart2, Settings, FileSearch, FolderOpen, CheckSquare, FileSignature, Bot,
 }
 
 interface SidebarProps {

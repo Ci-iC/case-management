@@ -148,6 +148,16 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
                           待你处理
                         </span>
                       )}
+                      {a.currentNodeKind === 'seal' && (
+                        <span className="rounded bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 text-[10px] font-semibold">
+                          用印
+                        </span>
+                      )}
+                      {a.currentNodeKind === 'upload_scan' && (
+                        <span className="rounded bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold">
+                          上传扫描件
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-medium text-slate-800 truncate mb-0.5">{a.contractName}</p>
                     <div className="flex items-center gap-3 text-[11px] text-slate-400">

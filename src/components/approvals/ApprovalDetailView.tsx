@@ -11,6 +11,20 @@ import { cn } from '@/utils/helpers'
 import { CONTRACT_STATUS_BADGE, CONTRACT_STATUS_LABELS } from '@/constants'
 import type { ApprovalDetail, ApprovalStep, Contact, ContractStatus } from '@/types'
 
+// 是否"用印节点"（印章管理员盖章）。只认流程节点配置的角色（stepRole），
+// 绝不看处理人身份 —— 否则"财务兼印章岗"的人担任的财务节点会被误判成用印。
+function isSealStep(s: ApprovalStep | null | undefined): boolean {
+  return !!s && s.stepType === 'approver' && s.stepRole === 'seal_admin'
+}
+
+// 节点的业务说明标签：用印 / 上传扫描件 / 普通审批，供进度条与操作区统一使用。
+function nodeKindLabel(s: ApprovalStep | null | undefined): string | null {
+  if (!s) return null
+  if (s.stepType === 'final-initiator') return '上传盖章扫描件'
+  if (isSealStep(s)) return '用印'
+  return null
+}
+
 interface Props {
   approvalId: string
   /** 操作执行后回调（关闭详情、刷新列表） */
@@ -241,27 +255,56 @@ function ProgressBar({
   const allNodes = [...approverSteps]
   if (finalStep) allNodes.push(finalStep)
   if (allNodes.length === 0) return null
+  const hasSeal = allNodes.some(s => isSealStep(s))
   return (
-    <div className="flex items-center gap-1 overflow-x-auto pb-1">
-      {allNodes.map((s, idx) => {
-        const isCurrent = s.id === currentStepId
-        const color =
-          s.status === 'approved' ? 'bg-emerald-500 text-white'
-          : s.status === 'rejected' ? 'bg-red-500 text-white'
-          : isCurrent ? 'bg-blue-500 text-white animate-pulse'
-          : 'bg-slate-200 text-slate-500'
-        return (
-          <div key={s.id} className="flex items-center gap-1 shrink-0">
-            <div className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium', color)}>
-              {s.status === 'approved' ? <Check size={10} /> : s.status === 'rejected' ? <X size={10} /> : null}
-              <span>{s.assigneeDisplayName || s.assigneeUsername}</span>
+    <div>
+      <div className="flex items-start gap-1 overflow-x-auto pb-1">
+        {allNodes.map((s, idx) => {
+          const isCurrent = s.id === currentStepId
+          const color =
+            s.status === 'approved' ? 'bg-emerald-500 text-white'
+            : s.status === 'rejected' ? 'bg-red-500 text-white'
+            : isCurrent ? 'bg-blue-500 text-white animate-pulse'
+            : 'bg-slate-200 text-slate-500'
+          const kind = nodeKindLabel(s)
+          return (
+            <div key={s.id} className="flex items-center gap-1 shrink-0">
+              <div className="flex flex-col items-center gap-0.5">
+                <div className={cn('flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium', color)}>
+                  {s.status === 'approved' ? <Check size={10} /> : s.status === 'rejected' ? <X size={10} /> : null}
+                  <span>{s.assigneeDisplayName || s.assigneeUsername}</span>
+                </div>
+                {kind ? (
+                  <span className={cn(
+                    'rounded px-1.5 py-px text-[9px] font-semibold whitespace-nowrap border',
+                    s.stepType === 'final-initiator'
+                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200',
+                  )}>
+                    {kind}
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-slate-400 whitespace-nowrap">
+                    {s.stepLabel || '审批'}
+                  </span>
+                )}
+              </div>
+              {idx < allNodes.length - 1 && (
+                <div className="w-3 h-px bg-slate-300 mt-2.5" />
+              )}
             </div>
-            {idx < allNodes.length - 1 && (
-              <div className="w-3 h-px bg-slate-300" />
-            )}
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
+      {(hasSeal || finalStep) && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+          说明：流程最后两步为收尾环节，实质性审批到此已结束 ——
+          {hasSeal && <span className="text-amber-700 font-medium">「用印」</span>}
+          {hasSeal && '由印章管理员核对终稿后加盖公章；'}
+          <span className="text-indigo-700 font-medium">「上传盖章扫描件」</span>
+          由经办人上传盖章后的扫描件归档。
+        </p>
+      )}
     </div>
   )
 }
@@ -319,12 +362,12 @@ function WatermarkExportButton({
   //   1. 合同已有清洁版（PDF 转换需要源 Word）
   //   2. 当前用户是经办人 或 印章管理员
   //   3. 流程已经"到达或越过"印章管理员节点 —— 在那之前合同可能被驳回、内容会变，不给提前下载。
-  //      印章管理员节点 = 主链里 assignee 角色含 seal_admin 的那个 approver step。
+  //      印章管理员节点 = 主链里"节点配置角色"(stepRole)为 seal_admin 的那个 approver step。
   //      "到达或越过" = 该 step 正是当前步（印章管理员正在处理）或已 approved（印章已通过）。
   if (!cleanFilename) return null
   if (!meIsSealAdmin && !isInitiator) return null
 
-  const sealStep = approverSteps.find(s => (s.assigneeRoles || []).includes('seal_admin'))
+  const sealStep = approverSteps.find(isSealStep)
   const reachedSeal = !!sealStep && (sealStep.id === currentStepId || sealStep.status === 'approved')
   if (!reachedSeal) return null
 
@@ -400,7 +443,7 @@ function ActionLabel({
     )
     case 'submit_consultation': return <span className="text-blue-700">提交加签意见</span>
     case 'resubmit': return <>经办人重新提交</>
-    case 'upload_seal': return <span className="text-emerald-700">上传用印版，流程结束</span>
+    case 'upload_seal': return <span className="text-emerald-700">上传盖章扫描件，流程结束</span>
     default: return <>{action}</>
   }
 }
@@ -447,11 +490,40 @@ function ActionPanel({
         </ActionRoot>
       )
     }
-    // 待上传用印版
+    // 待上传盖章扫描件（流程最后一步）
     return (
-      <ActionRoot title="所有审批已通过，请上传用印版">
+      <ActionRoot
+        title="上传盖章扫描件（流程最后一步）"
+        note="全部审批及用印均已完成、实质审批已结束。请上传加盖公章后的扫描件归档，提交后合同状态将变为「已签署」。"
+      >
         <UploadSealButton approvalId={approvalId} onDone={onDone} />
       </ActionRoot>
+    )
+  }
+
+  // 用印节点：印章管理员盖章环节，单独给出说明（处理人常由财务/人力兼任，需点明这是用印步骤）
+  if (isSealStep(currentStep)) {
+    return (
+      <>
+        <ActionRoot
+          title="用印：请核对终稿后加盖公章"
+          note="此节点为审批流的用印环节，实质性审批已全部通过。请核对终稿无误后加盖公章，再点【通过】流转给经办人上传扫描件归档；若终稿有误可【驳回】。"
+        >
+          <Button variant="primary" size="md" icon={<Check size={14} />} onClick={() => setApproveOpen(true)}>
+            已用印，通过
+          </Button>
+          <Button variant="danger" size="md" icon={<X size={14} />} onClick={() => setRejectOpen(true)}>
+            驳回
+          </Button>
+          <Button variant="outline" size="md" icon={<UserPlus size={14} />} onClick={() => setConsulteeOpen(true)}>
+            加签
+          </Button>
+        </ActionRoot>
+
+        <ApproveDialog open={approveOpen} onClose={() => setApproveOpen(false)} approvalId={approvalId} onDone={onDone} />
+        <RejectDialog open={rejectOpen} onClose={() => setRejectOpen(false)} approvalId={approvalId} onDone={onDone} />
+        <ConsulteeAddDialog open={consulteeOpen} onClose={() => setConsulteeOpen(false)} approvalId={approvalId} onDone={onDone} />
+      </>
     )
   }
 
@@ -492,10 +564,12 @@ function ActionPanel({
   )
 }
 
-function ActionRoot({ title, children }: { title: string; children: React.ReactNode }) {
+function ActionRoot({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border-2 border-primary-200 bg-primary-50/40 p-4">
-      <p className="text-xs font-semibold text-primary-800 mb-3">{title}</p>
+      <p className="text-xs font-semibold text-primary-800 mb-1">{title}</p>
+      {note && <p className="text-[11px] leading-relaxed text-slate-600 mb-3">{note}</p>}
+      {!note && <div className="mb-3" />}
       <div className="flex flex-wrap gap-2">{children}</div>
     </section>
   )

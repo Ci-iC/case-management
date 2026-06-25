@@ -8,9 +8,8 @@
 //   - 经办人通常 AI 提取不到（合同里没明确"经办人"语义），返 null 让用户手填
 //   - 提取失败 → 抛错（路由层兜底返 400 给前端）
 
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { chatCompletion } from './openai.js'
+import { extractTextFromFile } from './textExtract.js'
 
 const CONTRACT_TYPES = [
   '货物销售合同', '货物采购合同', '矿权转让合同', '研发实验类合同',
@@ -91,26 +90,6 @@ ${ourHint}
 - 只输出 JSON，无任何前后导语。
 - 枚举字段必须落在给定枚举内，否则 null。
 - 不确定 / 合同没写 → null（数组 → []），绝不编造。`
-}
-
-async function extractTextFromFile(absPath, mimeType, originalName) {
-  const ext = path.extname(originalName).toLowerCase()
-  if (ext === '.txt' || mimeType === 'text/plain') {
-    return (await fs.readFile(absPath, 'utf8')).trim()
-  }
-  if (ext === '.docx') {
-    const mammoth = (await import('mammoth')).default
-    const buf = await fs.readFile(absPath)
-    const result = await mammoth.extractRawText({ buffer: buf })
-    return (result.value || '').trim()
-  }
-  if (ext === '.doc') {
-    const WordExtractor = (await import('word-extractor')).default
-    const extractor = new WordExtractor()
-    const doc = await extractor.extract(absPath)
-    return (doc.getBody() || '').trim()
-  }
-  return ''
 }
 
 function normalize(raw) {

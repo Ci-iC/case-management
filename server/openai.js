@@ -20,8 +20,9 @@ async function getOpenAIConfig() {
 
 /** 调 chat/completions，返回 message.content 字符串
  *  responseFormat:'json_object' 时强制模型返回合法 JSON
- *  temperature: 抽取类任务传 0 取确定性输出；不传则用模型默认值 */
-export async function chatCompletion({ system, user, model, responseFormat, temperature }) {
+ *  temperature: 抽取类任务传 0 取确定性输出；不传则用模型默认值
+ *  messages: 传入完整多轮对话数组时，覆盖 system/user 单轮；system 仍会作为首条插入 */
+export async function chatCompletion({ system, user, messages, model, responseFormat, temperature }) {
   const cfg = await getOpenAIConfig()
   if (!cfg.apiKey || cfg.apiKey === 'sk-replace-me') {
     throw new Error('未配置 OpenAI API Key（admin 请到「系统设置 → OpenAI 连接」填写）')
@@ -30,12 +31,19 @@ export async function chatCompletion({ system, user, model, responseFormat, temp
   const baseURL = cfg.baseURL
   const useModel = model || cfg.defaultModel
 
-  const body = {
-    model: useModel,
-    messages: [
+  let msgs
+  if (Array.isArray(messages) && messages.length) {
+    msgs = system ? [{ role: 'system', content: system }, ...messages] : messages
+  } else {
+    msgs = [
       { role: 'system', content: system },
       { role: 'user', content: user },
-    ],
+    ]
+  }
+
+  const body = {
+    model: useModel,
+    messages: msgs,
   }
   if (responseFormat === 'json_object') {
     body.response_format = { type: 'json_object' }

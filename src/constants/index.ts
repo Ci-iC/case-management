@@ -122,10 +122,11 @@ export const DEFAULT_FILTERS = {
 // ─── Navigation Items (for Sidebar) ───────────────────────────────────────────
 
 export const NAV_ITEMS = [
-  { id: 'reviews',   label: '合同审核', icon: 'FileSearch',  path: '/reviews' },
-  { id: 'approvals', label: '合同审批', icon: 'CheckSquare', path: '/approvals' },
-  { id: 'contracts', label: '合同台账', icon: 'FolderOpen',  path: '/contracts', requiresContractAccess: true },
-  { id: 'cases',     label: '案件台账', icon: 'Briefcase',   path: '/',          requiresCaseAccess: true },
+  { id: 'workbench', label: 'AI 工作台', icon: 'Bot',          path: '/' },
+  { id: 'reviews',   label: '合同审核', icon: 'FileSearch',    path: '/reviews' },
+  { id: 'approvals', label: '合同审批', icon: 'CheckSquare',   path: '/approvals' },
+  { id: 'contracts', label: '合同台账', icon: 'FolderOpen',    path: '/contracts', requiresContractAccess: true },
+  { id: 'cases',     label: '案件台账', icon: 'Briefcase',     path: '/',          requiresCaseAccess: true },
 ]
 
 /** v1.3 合同状态显示文案 + 配色（badge） */

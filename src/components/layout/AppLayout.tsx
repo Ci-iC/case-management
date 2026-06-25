@@ -6,15 +6,17 @@ import { canSeeCases, canSeeAllContracts } from '@/api/auth'
 import CasesPage from '@/pages/CasesPage'
 import ContractReviewPage from '@/pages/ContractReviewPage'
 import ContractsPage from '@/pages/ContractsPage'
+import WorkbenchPage from '@/pages/WorkbenchPage'
 import MessagesPage from '@/pages/MessagesPage'
 import ApprovalsPage from '@/pages/ApprovalsPage'
+import type { JumpLink } from '@/api/assistant'
 
 export default function AppLayout() {
   const user = useAuthStore(s => s.user)
   const viewCases = canSeeCases(user)
   const viewContracts = canSeeAllContracts(user) || !!(user?.companyRoles?.length)
 
-  const [activeNav, setActiveNav] = useState<string>(viewCases ? 'cases' : 'reviews')
+  const [activeNav, setActiveNav] = useState<string>('workbench')
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null)
 
@@ -24,9 +26,18 @@ export default function AppLayout() {
     setActiveNav('approvals')
   }
 
+  // 工作台待办里的"跳转查看"
+  function handleJump(link: JumpLink) {
+    setMessagesOpen(false)
+    if (link.nav === 'approvals' && link.approvalId) { navigateToApproval(link.approvalId); return }
+    if (link.nav === 'reviews') { setActiveNav('reviews'); return }
+    if (link.nav === 'contracts') { setActiveNav('contracts'); return }
+  }
+
   function showPage() {
     if (messagesOpen) return <MessagesPage onJumpToApproval={navigateToApproval} />
     switch (activeNav) {
+      case 'workbench': return <WorkbenchPage onNavigate={handleJump} />
       case 'cases': return viewCases ? <CasesPage /> : <ContractReviewPage />
       case 'reviews': return <ContractReviewPage />
       case 'contracts': return viewContracts

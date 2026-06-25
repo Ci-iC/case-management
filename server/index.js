@@ -17,6 +17,9 @@ import settingsRoutes from './routes/settings.js'
 import pipelineRoutes from './routes/pipelines.js'
 import contractRoutes from './routes/contracts.js'
 import approvalRoutes from './routes/approvals.js'
+import draftRoutes, { cleanupDraftFiles } from './routes/draft.js'   // v2.2 合同起草
+import assistantRoutes from './routes/assistant.js'                  // v2.3 AI 工作台
+import { cleanupAssistantData } from './assistantStore.js'           // v2.3
 import { runContractTermNotify } from './contractTermNotify.js'   // v1.4
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -47,6 +50,8 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/pipelines', pipelineRoutes)
 app.use('/api/contracts', contractRoutes)
 app.use('/api/approvals', approvalRoutes)
+app.use('/api/draft', draftRoutes)              // v2.2 合同起草（聊天式）
+app.use('/api/assistant', assistantRoutes)      // v2.3 AI 工作台
 
 // ─── Static frontend (prod) ────────────────────────────────────────────────────
 
@@ -91,6 +96,30 @@ app.listen(PORT, () => {
   }
   runTermNotify()
   setInterval(runTermNotify, 6 * 60 * 60 * 1000)
+
+  // v2.2: 合同起草生成的草稿文件不做长期存储，启动跑一次 + 每 6 小时清理超过 24h 的
+  const runDraftCleanup2 = async () => {
+    try {
+      const { count } = await cleanupDraftFiles({ maxAgeHours: 24 })
+      if (count > 0) console.log(`[draft-files-cleanup] removed ${count} stale draft file(s)`)
+    } catch (e) {
+      console.error('[draft-files-cleanup] failed:', e?.message || e)
+    }
+  }
+  runDraftCleanup2()
+  setInterval(runDraftCleanup2, 6 * 60 * 60 * 1000)
+
+  // v2.3: AI 工作台对话/附件，当天保留次日清空，启动跑一次 + 每 6 小时清理
+  const runAssistantCleanup = async () => {
+    try {
+      const { count } = await cleanupAssistantData()
+      if (count > 0) console.log(`[assistant-cleanup] removed ${count} stale assistant record(s)`)
+    } catch (e) {
+      console.error('[assistant-cleanup] failed:', e?.message || e)
+    }
+  }
+  runAssistantCleanup()
+  setInterval(runAssistantCleanup, 6 * 60 * 60 * 1000)
 })
 
 process.on('uncaughtException', (err) => {

@@ -152,6 +152,9 @@ function rowToApproval(row) {
     currentAssigneeId: row.current_assignee_id || null,
     currentAssigneeUsername: row.current_assignee_username || null,
     currentAssigneeDisplayName: row.current_assignee_display_name || null,
+    // 当前节点种类：seal=用印 / upload_scan=上传盖章扫描件 / approve=普通审批（两步均为收尾，实质审批已结束）
+    currentNodeKind: row.current_step_type === 'final-initiator' ? 'upload_scan'
+      : row.current_step_role === 'seal_admin' ? 'seal' : 'approve',
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     completedAt: toIso(row.completed_at),
@@ -167,6 +170,8 @@ function rowToStep(row) {
     stepIndex: row.step_index,
     parentStepId: row.parent_step_id || null,
     stepType: row.step_type,
+    stepRole: row.step_role || null,
+    stepLabel: row.step_label || null,
     assigneeId: row.assignee_id,
     assigneeUsername: row.assignee_username,
     assigneeDisplayName: row.assignee_display_name,
@@ -204,7 +209,7 @@ const APPROVAL_SELECT = [
   'a.current_step_id', 'a.created_at', 'a.updated_at', 'a.completed_at', 'a.rejected_at',
   'c.code as contract_code', 'c.name as contract_name', 'c.status as contract_status',
   'iu.username as initiator_username', 'iu.display_name as initiator_display_name',
-  'cs.assignee_id as current_assignee_id',
+  'cs.assignee_id as current_assignee_id', 'cs.step_type as current_step_type', 'cs.step_role as current_step_role',
   'cu.username as current_assignee_username', 'cu.display_name as current_assignee_display_name',
 ]
 
@@ -244,12 +249,16 @@ async function sendApprovalNotice(trx, { approvalId, senderId, recipientId, body
   })
 }
 
-function buildNoticeBody({ contract, action, actorName, extra }) {
+function buildNoticeBody({ contract, action, actorName, extra, isSealNode }) {
   const head = `${contract.code} 《${contract.name}》`
   switch (action) {
-    case 'submit':              return `您有一份合同待审批：${head}（由 ${actorName} 发起）${extra ? `\n\n发起说明：${extra}` : ''}`
-    case 'approve_next':        return `合同审批流转到您：${head}（上一步由 ${actorName} 通过）${extra ? `\n\n上一步意见：${extra}` : ''}`
-    case 'approve_final':       return `合同审批已全部通过，请您上传用印版：${head}${extra ? `\n\n上一步意见：${extra}` : ''}`
+    case 'submit':
+      if (isSealNode) return `合同实质性审批已完成，现需您【用印盖章】：${head}（由 ${actorName} 发起）。请核对终稿无误后加盖公章，并在审批界面点【通过】。${extra ? `\n\n发起说明：${extra}` : ''}`
+      return `您有一份合同待审批：${head}（由 ${actorName} 发起）${extra ? `\n\n发起说明：${extra}` : ''}`
+    case 'approve_next':
+      if (isSealNode) return `合同已通过全部实质性审批，现需您【用印盖章】：${head}（上一步由 ${actorName} 通过）。这是审批流的用印环节，请核对终稿无误后加盖公章，并在审批界面点【通过】。${extra ? `\n\n上一步意见：${extra}` : ''}`
+      return `合同审批流转到您：${head}（上一步由 ${actorName} 通过）${extra ? `\n\n上一步意见：${extra}` : ''}`
+    case 'approve_final':       return `合同已完成全部审批及用印，请您上传【盖章后的扫描件】归档（此为流程最后一步，实质审批已结束）：${head}${extra ? `\n\n上一步意见：${extra}` : ''}`
     case 'reject_to_step':      return `您的合同审批被驳回，请修改材料后在审批界面点【重新提交】：${head}（驳回人：${actorName}）${extra ? `\n\n驳回意见：${extra}` : ''}`
     case 'reject_to_start':     return `您的合同审批被驳回（重新发起）：${head}（驳回人：${actorName}）${extra ? `\n\n驳回意见：${extra}` : ''}\n\n如需继续，请到合同审批页重新发起。`
     case 'add_consultee':       return `您被 ${actorName} 加签到合同审批：${head}${extra ? `\n\n加签说明：${extra}` : ''}\n\n请在审批界面提交您的意见。`
@@ -257,6 +266,13 @@ function buildNoticeBody({ contract, action, actorName, extra }) {
     case 'resubmit':            return `经办人已重新提交合同，请继续审批：${head}（经办人：${actorName}）${extra ? `\n\n补充说明：${extra}` : ''}`
     default: return `合同审批有更新：${head}`
   }
+}
+
+// 判断某个审批步骤是否"用印节点"（印章管理员盖章）。
+//   只认流程节点配置的角色（step_role），绝不看处理人本身的身份 —— 否则"财务兼印章岗"
+//   的人担任的财务节点会被误判成用印节点。step_role 为空（极个别无法回填的老审批）按普通审批处理。
+function stepIsSealNode(step) {
+  return !!step && step.step_type === 'approver' && step.step_role === 'seal_admin'
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -444,23 +460,28 @@ r.post('/', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 'sta
       const approvalId = approvalRow.id
 
       // 按模板生成主链：step_index = 1..N
+      //   v2.4：把模板的 role / step_label 固化到步骤上，节点身份不再靠处理人角色推断
       let firstStepId = null
       for (const ts of templateSteps) {
         const [row] = await trx('approval_steps').insert({
           approval_id: approvalId,
           step_index: ts.step_index,
           step_type: 'approver',
+          step_role: ts.role,
+          step_label: ts.step_label || null,
           assignee_id: assignmentMap.get(ts.step_index),
           status: 'pending',
           company_id: companyId,
         }, ['id'])
         if (firstStepId === null) firstStepId = row.id
       }
-      // 经办人最终节点
+      // 经办人最终节点（用印完成后上传盖章扫描件归档）
       await trx('approval_steps').insert({
         approval_id: approvalId,
         step_index: 999,
         step_type: 'final-initiator',
+        step_role: null,
+        step_label: '上传盖章扫描件',
         assignee_id: initiatorId,
         status: 'pending',
         company_id: companyId,
@@ -490,6 +511,7 @@ r.post('/', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 'sta
           contract, action: 'submit',
           actorName: req.user.displayName || req.user.username,
           extra: initiationNote ? String(initiationNote).trim() : '',
+          isSealNode: templateSteps[0].role === 'seal_admin',
         }),
         companyId,
       })
@@ -651,6 +673,7 @@ r.get('/:id', async (req, res, next) => {
       .leftJoin('users as u', 's.assignee_id', 'u.id')
       .select(
         's.id', 's.approval_id', 's.step_index', 's.parent_step_id', 's.step_type',
+        's.step_role', 's.step_label',
         's.assignee_id', 's.status', 's.comment', 's.actioned_at', 's.created_at',
         'u.username as assignee_username', 'u.display_name as assignee_display_name',
       )
@@ -780,6 +803,7 @@ r.post('/:id/approve', async (req, res, next) => {
 
       const targetStep = await trx('approval_steps').where({ id: nextStepId }).first()
       const contract = await trx('contracts').where({ id: approval.contract_id }).first()
+      const isSealTarget = !isFinalInitiator && stepIsSealNode(targetStep)
       await sendApprovalNotice(trx, {
         approvalId: approval.id,
         senderId: req.user.id,
@@ -789,6 +813,7 @@ r.post('/:id/approve', async (req, res, next) => {
           action: isFinalInitiator ? 'approve_final' : 'approve_next',
           actorName: req.user.displayName || req.user.username,
           extra: comment,
+          isSealNode: isSealTarget,
         }),
         companyId,
       })

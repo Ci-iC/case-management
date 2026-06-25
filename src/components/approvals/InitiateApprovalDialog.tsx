@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Send, Loader2, Sparkles, ChevronRight, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
@@ -16,6 +16,8 @@ interface Props {
   onInitiated: (approvalId: string) => void
   /** 可选：从合同台账上点"发起审批"时预填合同 */
   prefillContractId?: string
+  /** 可选：AI 工作台传入的清洁版文件——打开后自动作为新清洁版并触发 AI 字段提取 */
+  prefillCleanFile?: File | null
 }
 
 /**
@@ -26,7 +28,7 @@ interface Props {
  * - 某角色在公司内没人 → 整体禁止发起，提示联系超管补人
  * - 无模板 → 整体禁止发起，提示联系超管配置模板
  */
-export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillContractId }: Props) {
+export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillContractId, prefillCleanFile }: Props) {
   const me = useAuthStore(s => s.user)
   const [contracts, setContracts] = useState<ContractRecord[]>([])
   const [contractId, setContractId] = useState<string>('')
@@ -51,6 +53,8 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
   const [extractError, setExtractError] = useState<string | null>(null)
   // 卡片是“挂载时读 initial”的非完全受控组件：每次程序化写入字段后 +1，强制卡片用新值重挂载
   const [cardKey, setCardKey] = useState(0)
+  // AI 工作台预填清洁版：每次打开只自动套用一次
+  const prefillCleanDoneRef = useRef(false)
 
   useEffect(() => {
     if (!open) return
@@ -164,6 +168,17 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId, contracts, me?.id])
+
+  // AI 工作台传入清洁版：待合同选定 + 模板预览就绪后，自动套用为新清洁版并跑一次 AI 提取（每次打开仅一次）
+  useEffect(() => { if (!open) prefillCleanDoneRef.current = false }, [open])
+  useEffect(() => {
+    if (!open || !prefillCleanFile || !contractId || !preview || prefillCleanDoneRef.current) return
+    prefillCleanDoneRef.current = true
+    setCleanMode('new')
+    setCleanFile(prefillCleanFile)
+    void runExtractFromClean({ cleanFile: prefillCleanFile })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefillCleanFile, contractId, preview])
 
   function validateFields(): string | null {
     if (!fields.contractName || !fields.contractName.trim()) return '请填写合同名称'
