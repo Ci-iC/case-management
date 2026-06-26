@@ -19,6 +19,7 @@ import contractRoutes from './routes/contracts.js'
 import approvalRoutes from './routes/approvals.js'
 import draftRoutes, { cleanupDraftFiles } from './routes/draft.js'   // v2.2 合同起草
 import assistantRoutes from './routes/assistant.js'                  // v2.3 AI 工作台
+import contractTemplateRoutes from './routes/contractTemplates.js'   // 合同模板库管理（超管）
 import { cleanupAssistantData } from './assistantStore.js'           // v2.3
 import { runContractTermNotify } from './contractTermNotify.js'   // v1.4
 
@@ -52,6 +53,7 @@ app.use('/api/contracts', contractRoutes)
 app.use('/api/approvals', approvalRoutes)
 app.use('/api/draft', draftRoutes)              // v2.2 合同起草（聊天式）
 app.use('/api/assistant', assistantRoutes)      // v2.3 AI 工作台
+app.use('/api/contract-templates', contractTemplateRoutes)   // 合同模板库管理（超管）
 
 // ─── Static frontend (prod) ────────────────────────────────────────────────────
 

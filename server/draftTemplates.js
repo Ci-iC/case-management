@@ -10,11 +10,12 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { DATA_ROOT } from './storage.js'
+import { DATA_ROOT, ensureDir, safeFilename } from './storage.js'
 import { extractTextFromFile } from './textExtract.js'
 
 const TEMPLATE_DIR = path.join(DATA_ROOT, 'contract-templates')
 const MANIFEST_NAME = '模板说明.md'
+const TEMPLATE_EXTS = new Set(['.docx', '.doc'])
 
 export function getTemplateDir() {
   return TEMPLATE_DIR
@@ -59,4 +60,61 @@ export async function readTemplateText(filename) {
   } catch {
     return null
   }
+}
+
+// ─── 管理（admin 编辑模板库 / 指引）────────────────────────────────────────────
+
+/** 模板文件清单（含大小、修改时间）。文件夹不存在返回 []。 */
+export async function listTemplateFileStats() {
+  try {
+    const names = await fs.readdir(TEMPLATE_DIR)
+    const out = []
+    for (const n of names) {
+      if (!TEMPLATE_EXTS.has(path.extname(n).toLowerCase())) continue
+      try {
+        const st = await fs.stat(path.join(TEMPLATE_DIR, n))
+        out.push({ name: n, sizeBytes: st.size, updatedAt: st.mtime.toISOString() })
+      } catch { /* 跳过读不到的 */ }
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 写入「模板说明.md」（给 AI 选模板用的指引）。允许写空内容。 */
+export async function writeManifest(content) {
+  await ensureDir(TEMPLATE_DIR)
+  await fs.writeFile(path.join(TEMPLATE_DIR, MANIFEST_NAME), String(content ?? ''), 'utf8')
+}
+
+/** 把上传的模板文件从 tmp 移入模板库；仅接受 .docx/.doc，同名覆盖（即"替换"）。返回最终文件名。 */
+export async function saveTemplateFile(tmpAbsPath, originalName) {
+  const ext = path.extname(originalName || '').toLowerCase()
+  if (!TEMPLATE_EXTS.has(ext)) {
+    const err = new Error('模板文件只支持 Word（.docx/.doc）'); err.status = 400; throw err
+  }
+  await ensureDir(TEMPLATE_DIR)
+  const safe = safeFilename(path.basename(originalName))
+  await fs.rename(tmpAbsPath, path.join(TEMPLATE_DIR, safe))
+  return safe
+}
+
+/** 删除一个模板文件（basename 防穿越，必须确实在库里）。 */
+export async function deleteTemplateFile(filename) {
+  const safe = path.basename(String(filename || ''))
+  const files = await listTemplateFiles()
+  if (!files.includes(safe)) {
+    const err = new Error('模板文件不存在'); err.status = 404; throw err
+  }
+  await fs.unlink(path.join(TEMPLATE_DIR, safe))
+}
+
+/** 取模板文件绝对路径（下载用，防穿越；不存在返回 null）。 */
+export async function templateFileAbsPath(filename) {
+  const safe = path.basename(String(filename || ''))
+  const files = await listTemplateFiles()
+  if (!files.includes(safe)) return null
+  return path.join(TEMPLATE_DIR, safe)
 }
