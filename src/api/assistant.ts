@@ -24,13 +24,16 @@ export interface FileLink {
 export interface ActionField {
   key: string
   label: string
-  type: 'text' | 'textarea' | 'select' | 'readonly'
+  // select=按钮组（选项少时）；dropdown=原生下拉（选项多时，如历史合同列表）
+  type: 'text' | 'textarea' | 'select' | 'dropdown' | 'readonly'
   required?: boolean
   options?: { value: string; label?: string }[]
   allowCustom?: boolean
   placeholder?: string
   hint?: string
   value?: string
+  /** 条件显隐：仅当另一字段 key 的当前取值等于 value 时才显示（用于互斥字段） */
+  showWhen?: { key: string; value: string }
 }
 
 // 写操作提议（pending_action）

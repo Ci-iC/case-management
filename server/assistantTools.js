@@ -66,6 +66,30 @@ async function myParticipatedContractIds(reqUser) {
   return ids.filter(Boolean)
 }
 
+// 可"升版关联"的历史合同：本公司、尚未进入审批流程（approval_started_at 为空才允许再加新版本，
+// 与 POST /api/reviews/:id/submit 的后端校验一致）、当前用户有权见。带 versionCount（已提交版本数）。
+async function associableContracts(reqUser) {
+  if (!reqUser?.currentCompanyId) return []
+  let q = db('contracts as c')
+    .where('c.company_id', reqUser.currentCompanyId)
+    .whereNull('c.approval_started_at')
+  if (!reqUser.canViewAllContracts && !reqUser.isAllCompaniesView) {
+    const participatedIds = await myParticipatedContractIds(reqUser)
+    q = q.where(function () {
+      this.where('c.created_by', reqUser.id).orWhere('c.handler_id', reqUser.id)
+      if (participatedIds.length) this.orWhereIn('c.id', participatedIds)
+    })
+  }
+  const rows = await q.orderBy('c.updated_at', 'desc').select('c.id', 'c.code', 'c.name').limit(50)
+  if (rows.length === 0) return []
+  const ids = rows.map((r) => r.id)
+  const counts = await db('case_reviews')
+    .whereIn('contract_id', ids).where('is_draft', false)
+    .groupBy('contract_id').select('contract_id').count('* as n')
+  const cntMap = new Map(counts.map((c) => [c.contract_id, Number(c.n)]))
+  return rows.map((r) => ({ id: r.id, code: r.code, name: r.name, versionCount: cntMap.get(r.id) || 0 }))
+}
+
 // 按 code/name 找合同，权限放宽到"可读 或 参与审批"。用于取流程文件。
 async function findAccessibleContract(reqUser, query) {
   if (!query || !reqUser?.currentCompanyId) return null
@@ -520,22 +544,28 @@ export const TOOLS = [
     kind: 'write',
     label: '提交法务审核',
     requiredRoles: null,
-    description: '把一条已完成 AI 审核的草稿(reviewId)提交法务：自动新建合同(只需 contractName，编号自动)或挂到已有合同(contractMode=existing+contractId)，并通知接收法务(receiverId 用 list_legal_members 查)。',
+    description: '把一条已完成 AI 审核的草稿(reviewId)提交法务，并通知接收法务(receiverId 用 list_legal_members 查)。两种归属：①新建合同 contractMode=new(只需 contractName，编号自动)；②升版关联到已有合同 contractMode=existing——同一份合同的修订版/二三版用它，作为该合同新版本(V2/V3…)，别新建重复合同。用户说"这是XX合同的修订版/二版/在XX基础上改的"或点名某既有合同时，设 contractMode=existing 并把那份历史合同名填进 contractName，系统会自动匹配关联、用户还能在确认框核对改选。',
     args: {
       reviewId: '已完成 AI 审核的审核记录 ID（来自 submit_review）',
-      contractMode: 'new（新建合同，默认）或 existing（挂到已有合同）',
-      contractName: 'contractMode=new 时的新合同名称（编号系统自动生成，无需填编号）',
-      contractId: 'contractMode=existing 时要挂到的合同 ID',
+      contractMode: 'new（新建合同，默认）或 existing（升版关联到已有合同）',
+      contractName: 'new 时=新合同名称（编号自动）；existing 时=用户点名的那份历史合同名称（用于系统自动匹配关联）',
+      contractId: 'existing 时要关联到的历史合同 ID（一般留空，由确认框按名称匹配/用户选择）',
       receiverId: '接收法务的 userId（用 list_legal_members 查）',
       body: '给法务的说明/留言',
     },
     executor: 'submit_to_legal',
     available: (u) => !!u?.currentCompanyId && !u?.isAllCompaniesView,
     async summarize(args) {
-      let contract = args?.contractMode === 'existing' ? (args?.contractId || '(未指定合同)') : `新建：${args?.contractName || '(未填名称)'}`
-      if (args?.contractMode === 'existing' && args?.contractId) {
-        const c = await db('contracts').where({ id: args.contractId }).first()
-        if (c) contract = `${c.code} ${c.name}`
+      let contract
+      if (args?.contractMode === 'existing') {
+        if (args?.contractId) {
+          const c = await db('contracts').where({ id: args.contractId }).first()
+          contract = c ? `升版关联：${c.code} ${c.name}` : '升版关联已有合同（确认框选择）'
+        } else {
+          contract = `升版关联已有合同${args?.contractName ? `（匹配「${args.contractName}」）` : '（确认框选择）'}`
+        }
+      } else {
+        contract = `新建：${args?.contractName || '(未填名称)'}`
       }
       let receiver = args?.receiverId || '(未指定)'
       if (args?.receiverId) {
@@ -545,21 +575,52 @@ export const TOOLS = [
       return { 操作: '提交法务审核', 合同: contract, 接收法务: receiver, 留言: args?.body || '(无)' }
     },
     async fields(args, ctx) {
+      const reqUser = ctx.reqUser
       // 接收法务下拉：本公司 legal 角色
       const members = await db('user_company_roles as ucr')
         .innerJoin('users as u', 'ucr.user_id', 'u.id')
         .whereNull('u.deleted_at')
-        .where('ucr.company_id', ctx.reqUser.currentCompanyId)
+        .where('ucr.company_id', reqUser.currentCompanyId)
         .where('ucr.role', 'legal')
         .select('u.id as userId', 'u.username', 'u.display_name as displayName')
         .orderBy('u.username', 'asc')
-      const options = members.map((m) => ({ value: m.userId, label: m.displayName || m.username }))
+      const memberOptions = members.map((m) => ({ value: m.userId, label: m.displayName || m.username }))
+
+      // 可升版关联的历史合同（仅起草中、未发起审批的才能再加版本）
+      const assoc = await associableContracts(reqUser)
+      const contractOptions = assoc.map((c) => ({ value: c.id, label: `${c.code} · ${c.name}（已审 ${c.versionCount} 次）` }))
+
+      // 自动关联：AI 给了 contractId 直接用；否则若意图为升版且给了名称，按名称/编号在可关联列表里匹配一份
+      let defaultContractId = args?.contractId || ''
+      if (!defaultContractId && args?.contractName) {
+        const kw = String(args.contractName).trim()
+        const hit = assoc.find((c) => c.name && (c.name.includes(kw) || kw.includes(c.name))) || assoc.find((c) => c.code === kw)
+        if (hit) defaultContractId = hit.id
+      }
+      const matched = defaultContractId && contractOptions.some((o) => o.value === defaultContractId)
+      const defaultMode = (args?.contractMode === 'existing' || matched) ? 'existing' : 'new'
+
       return [
-        { key: 'contractName', label: '合同名称', type: 'text', required: true,
-          value: args?.contractName || '', placeholder: '给这份合同起个名字（编号由系统自动生成）' },
-        { key: 'receiverId', label: '接收法务', type: 'select', required: true, options,
-          value: args?.receiverId || (options[0]?.value || ''),
-          hint: options.length === 0 ? '本公司暂无法务岗用户' : undefined },
+        { key: 'contractMode', label: '提交方式', type: 'select', required: true,
+          options: [
+            { value: 'new', label: '新建合同' },
+            { value: 'existing', label: '关联已有合同（升版 V2/V3…）' },
+          ],
+          value: defaultMode,
+          hint: '同一份合同的修订/二版选「关联已有合同」，会作为新版本挂在原合同下、不另建' },
+        { key: 'contractId', label: '关联到历史合同', type: 'dropdown', required: true,
+          options: contractOptions, value: matched ? defaultContractId : '',
+          placeholder: '选择要升版的历史合同…',
+          showWhen: { key: 'contractMode', value: 'existing' },
+          hint: contractOptions.length === 0
+            ? '当前没有可升版关联的合同（已发起审批/已签署的不可再加版本）'
+            : '这份审核将作为所选合同的新版本（V2/V3…）归档' },
+        { key: 'contractName', label: '新合同名称', type: 'text', required: true,
+          value: matched ? '' : (args?.contractName || ''), placeholder: '给这份合同起个名字（编号系统自动生成）',
+          showWhen: { key: 'contractMode', value: 'new' } },
+        { key: 'receiverId', label: '接收法务', type: 'select', required: true, options: memberOptions,
+          value: args?.receiverId || (memberOptions[0]?.value || ''),
+          hint: memberOptions.length === 0 ? '本公司暂无法务岗用户' : undefined },
         { key: 'body', label: '给法务的留言', type: 'textarea', required: true,
           value: args?.body || '请帮忙审核这份合同，谢谢。' },
       ]

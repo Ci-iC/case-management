@@ -47,17 +47,24 @@ export function ConfirmActionModal({ open, action, loading, onConfirm, onCancel 
     setValues((prev) => ({ ...prev, [key]: v }))
   }
 
+  // 条件显隐：仅当依赖字段的当前取值匹配时才显示（互斥字段靠它实现）
+  function isVisible(f: ActionField): boolean {
+    if (!f.showWhen) return true
+    return String(values[f.showWhen.key] ?? '') === f.showWhen.value
+  }
+
   function handleConfirm() {
     for (const f of editable) {
-      if (f.required && !String(values[f.key] ?? '').trim()) {
+      if (isVisible(f) && f.required && !String(values[f.key] ?? '').trim()) {
         setError(`请填写「${f.label}」`)
         return
       }
     }
-    // 收集最终值（只回传 editable + 有值的）
+    // 收集最终值（只回传 editable + 当前可见 + 有值的；隐藏字段不提交，保证互斥）
     const out: Record<string, string> = {}
     for (const f of fields) {
       if (f.type === 'readonly') continue
+      if (!isVisible(f)) continue
       const v = String(values[f.key] ?? '').trim()
       if (v) out[f.key] = v
     }
@@ -89,7 +96,7 @@ export function ConfirmActionModal({ open, action, loading, onConfirm, onCancel 
         <div className="max-h-[55vh] overflow-y-auto px-6 py-4">
           {fields.length > 0 ? (
             <div className="space-y-4">
-              {fields.map((f) => (
+              {fields.filter(isVisible).map((f) => (
                 <FieldRow
                   key={f.key}
                   field={f}
@@ -196,6 +203,23 @@ function FieldRow({
             <p className="text-xs text-amber-600">无可选项</p>
           )}
         </>
+      )}
+
+      {type === 'dropdown' && (
+        options.length === 0 ? (
+          <p className="text-xs text-amber-600">无可选项</p>
+        ) : (
+          <select
+            disabled={disabled} value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="form-select"
+          >
+            <option value="">{placeholder || '请选择…'}</option>
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label || o.value}</option>
+            ))}
+          </select>
+        )
       )}
 
       {type === 'text' && (

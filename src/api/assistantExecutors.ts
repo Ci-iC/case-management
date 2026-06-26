@@ -86,16 +86,20 @@ const EXECUTORS: Record<string, (args: Args, helpers: ExecutorHelpers) => Promis
   async submit_to_legal(args) {
     if (!args.reviewId) throw new Error('请先完成一次 AI 审核，再提交法务')
     if (!args.receiverId) throw new Error('请选择接收法务')
+    const mode = args.contractMode === 'existing' ? 'existing' : 'new'
+    if (mode === 'existing' && !args.contractId) throw new Error('请选择要升版关联的历史合同')
+    if (mode === 'new' && !args.contractName?.trim()) throw new Error('请填写新合同名称')
     await reviewsApi.submitToLegal(args.reviewId, {
-      contractMode: args.contractMode === 'existing' ? 'existing' : 'new',
-      contractName: args.contractName,
+      contractMode: mode,
+      contractName: mode === 'new' ? args.contractName : undefined,
       contractDescription: args.contractDescription,
-      contractId: args.contractId,
+      contractId: mode === 'existing' ? args.contractId : undefined,
       receiverId: args.receiverId,
       body: args.body || '请审核',
     })
-    const name = args.contractName ? `《${args.contractName}》` : '该合同'
-    return `已将${name}提交法务审核，预计 1~2 个工作日回复；法务处理后你会在「消息中心」收到站内通知。`
+    const name = mode === 'new' && args.contractName ? `《${args.contractName}》` : '该合同'
+    const how = mode === 'existing' ? '（作为该合同的新版本归档）' : ''
+    return `已将${name}提交法务审核${how}，预计 1~2 个工作日回复；法务处理后你会在「消息中心」收到站内通知。`
   },
 
   async initiate_approval(args, helpers) {

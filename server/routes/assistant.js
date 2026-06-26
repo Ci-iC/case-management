@@ -200,7 +200,7 @@ r.post('/action-result', async (req, res, next) => {
       out.push(reviewMsg)
       const guide = await appendMessage({
         userId: req.user.id, role: 'assistant', kind: 'text',
-        content: '以上是 AI 审核意见（仅供参考，不能替代法务正式审核）。你可以：① 根据建议修改合同后重新上传、让我再审一次；② 或者直接告诉我「提交法务审核」，我来帮你正式提交给本公司法务（约 1~2 个工作日回复）。',
+        content: '以上是 AI 审核意见（仅供参考，不能替代法务正式审核）。你可以：① 根据建议修改合同后重新上传、让我再审一次；② 或者直接告诉我「提交法务审核」，我来帮你正式提交给本公司法务（约 1~2 个工作日回复）。如果这份是某既有合同的修订版，提交时告诉我原合同名称，我会作为它的新版本（V2/V3）关联归档，不另建合同。',
         companyId: req.user.currentCompanyId,
       })
       out.push(guide)
