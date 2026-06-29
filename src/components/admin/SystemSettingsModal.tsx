@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Save, AlertCircle, CheckCircle2, Plug, Eye, EyeOff, Workflow, FileText, BookText, Upload, Download, Trash2 } from 'lucide-react'
+import { Save, AlertCircle, CheckCircle2, Plug, Eye, EyeOff, Workflow, FileText, BookText, Upload, Download, Trash2, Mail, Send } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { settingsApi } from '@/api/settings'
@@ -14,6 +14,24 @@ const OPENAI_API_KEY = 'openai_api_key'
 const OPENAI_BASE_URL = 'openai_base_url'
 const OPENAI_MODEL = 'openai_model_default'
 const CONTRACT_SUMMARY_PROMPT = 'contract_summary_prompt'
+// 邮件通知配置 key
+const EMAIL_ENABLED = 'email_enabled'
+const EMAIL_FROM = 'email_from'
+const SMTP_HOST = 'smtp_host'
+const SMTP_PORT = 'smtp_port'
+const SMTP_AUTH_CODE = 'smtp_auth_code'
+const APP_BASE_URL = 'app_base_url'
+
+interface EmailForm {
+  enabled: boolean
+  from: string
+  host: string
+  port: string
+  baseUrl: string
+  authCode: string        // 仅在用户输入新值时有内容
+  authCodeDirty: boolean
+  authCodeIsSet: boolean
+}
 
 interface OpenAIForm {
   apiKey: string
@@ -40,6 +58,16 @@ export function SystemSettingsModal({ open, onClose }: Props) {
   const [summaryPrompt, setSummaryPrompt] = useState('')
   const [originalSummaryPrompt, setOriginalSummaryPrompt] = useState('')
   const [savingSummary, setSavingSummary] = useState(false)
+
+  // 邮件通知配置
+  const [email, setEmail] = useState<EmailForm>({
+    enabled: false, from: '', host: '', port: '', baseUrl: '',
+    authCode: '', authCodeDirty: false, authCodeIsSet: false,
+  })
+  const [originalEmail, setOriginalEmail] = useState<EmailForm | null>(null)
+  const [savingEmail, setSavingEmail] = useState(false)
+  const [testEmailTo, setTestEmailTo] = useState('')
+  const [sendingTest, setSendingTest] = useState(false)
 
   // 合同模板库：指引（模板说明.md）+ 模板文件清单
   const [tplManifest, setTplManifest] = useState('')
@@ -74,6 +102,18 @@ export function SystemSettingsModal({ open, onClose }: Props) {
       const sp = m[CONTRACT_SUMMARY_PROMPT]?.value || ''
       setSummaryPrompt(sp)
       setOriginalSummaryPrompt(sp)
+      const ef: EmailForm = {
+        enabled: m[EMAIL_ENABLED]?.value === '1',
+        from: m[EMAIL_FROM]?.value || '',
+        host: m[SMTP_HOST]?.value || '',
+        port: m[SMTP_PORT]?.value || '',
+        baseUrl: m[APP_BASE_URL]?.value || '',
+        authCode: '',
+        authCodeDirty: false,
+        authCodeIsSet: !!m[SMTP_AUTH_CODE]?.isSet,
+      }
+      setEmail(ef)
+      setOriginalEmail(ef)
       await loadTemplates()
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败')
@@ -87,6 +127,52 @@ export function SystemSettingsModal({ open, onClose }: Props) {
     setTplManifest(manifest)
     setOriginalTplManifest(manifest)
     setTplFiles(files)
+  }
+
+  const emailDirty = !!originalEmail && (
+    email.enabled !== originalEmail.enabled ||
+    email.from !== originalEmail.from ||
+    email.host !== originalEmail.host ||
+    email.port !== originalEmail.port ||
+    email.baseUrl !== originalEmail.baseUrl ||
+    email.authCodeDirty
+  )
+
+  async function saveEmail() {
+    setSavingEmail(true)
+    setError(null)
+    try {
+      if (!originalEmail || email.enabled !== originalEmail.enabled) {
+        await settingsApi.update(EMAIL_ENABLED, email.enabled ? '1' : '0')
+      }
+      if (!originalEmail || email.from !== originalEmail.from) await settingsApi.update(EMAIL_FROM, email.from.trim())
+      if (!originalEmail || email.host !== originalEmail.host) await settingsApi.update(SMTP_HOST, email.host.trim())
+      if (!originalEmail || email.port !== originalEmail.port) await settingsApi.update(SMTP_PORT, email.port.trim())
+      if (!originalEmail || email.baseUrl !== originalEmail.baseUrl) await settingsApi.update(APP_BASE_URL, email.baseUrl.trim())
+      // 授权码：仅在用户输入了新值时提交（提交明文，后端 AES 加密入库）
+      if (email.authCodeDirty && email.authCode) await settingsApi.update(SMTP_AUTH_CODE, email.authCode)
+      setFlash('邮件配置已保存')
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+    } finally {
+      setSavingEmail(false)
+    }
+  }
+
+  async function sendTestEmail() {
+    if (!testEmailTo.trim()) { setError('请填写测试收件地址'); return }
+    if (emailDirty) { setError('请先保存邮件配置，再发送测试'); return }
+    setSendingTest(true)
+    setError(null)
+    try {
+      const res = await settingsApi.testEmail(testEmailTo.trim())
+      setFlash(res.message || '测试邮件已发送')
+    } catch (e) {
+      setError(`测试邮件发送失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSendingTest(false)
+    }
   }
 
   async function saveManifest() {
@@ -335,6 +421,83 @@ export function SystemSettingsModal({ open, onClose }: Props) {
             >
               保存 Prompt
             </Button>
+          </div>
+        </section>
+
+        {/* 邮件通知配置 */}
+        <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+          <div className="flex items-center gap-2">
+            <Mail size={14} className="text-primary-600" />
+            <h4 className="text-sm font-semibold text-slate-800">邮件通知配置</h4>
+            <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={email.enabled}
+                disabled={loading}
+                onChange={(e) => setEmail(s => ({ ...s, enabled: e.target.checked }))}
+              />
+              启用邮件通知
+            </label>
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            开启后，用户收到站内信时若填写了通知邮箱且未关闭个人开关，系统会异步发送邮件提醒（失败不影响站内信）。授权码加密存储，保存后不回显。
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="发信邮箱">
+              <input type="text" className="form-input" disabled={loading}
+                value={email.from} placeholder="globalx_notice@163.com"
+                onChange={(e) => setEmail(s => ({ ...s, from: e.target.value }))} />
+            </Field>
+            <Field label="系统访问域名">
+              <input type="text" className="form-input" disabled={loading}
+                value={email.baseUrl} placeholder="https://legal.globalxpharma.studio"
+                onChange={(e) => setEmail(s => ({ ...s, baseUrl: e.target.value }))} />
+            </Field>
+            <Field label="SMTP 服务器">
+              <input type="text" className="form-input" disabled={loading}
+                value={email.host} placeholder="smtp.163.com"
+                onChange={(e) => setEmail(s => ({ ...s, host: e.target.value }))} />
+            </Field>
+            <Field label="端口">
+              <input type="text" className="form-input" disabled={loading}
+                value={email.port} placeholder="465"
+                onChange={(e) => setEmail(s => ({ ...s, port: e.target.value }))} />
+            </Field>
+          </div>
+
+          <Field label="SMTP 授权码">
+            <input
+              type="password" className="form-input" disabled={loading}
+              value={email.authCode}
+              placeholder={email.authCodeIsSet ? '已配置（输入新值以替换）' : '请输入邮箱 SMTP 授权码'}
+              onChange={(e) => setEmail(s => ({ ...s, authCode: e.target.value, authCodeDirty: true }))}
+            />
+            <p className="mt-1 text-[11px] text-slate-400">
+              {email.authCodeIsSet ? '✓ 已配置（不回显明文）。' : '未配置。'}加密存储，不会出现在数据库明文或代码中。
+            </p>
+          </Field>
+
+          <div className="flex justify-end">
+            <Button variant="primary" size="md" icon={<Save size={14} />}
+              loading={savingEmail} disabled={!emailDirty} onClick={saveEmail}>
+              保存邮件配置
+            </Button>
+          </div>
+
+          {/* 发送测试邮件 */}
+          <div className="rounded-md border border-dashed border-slate-200 p-3">
+            <label className="mb-1.5 block text-xs font-medium text-slate-600">发送测试邮件</label>
+            <div className="flex gap-2">
+              <input type="text" className="form-input flex-1" disabled={loading || sendingTest}
+                value={testEmailTo} placeholder="填入测试收件地址，如 you@example.com"
+                onChange={(e) => setTestEmailTo(e.target.value)} />
+              <Button variant="secondary" size="md" icon={<Send size={14} />}
+                loading={sendingTest} onClick={sendTestEmail}>
+                发送
+              </Button>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">用当前已保存的配置发送一封测试邮件，验证是否正确（测试不受"启用开关"限制）。</p>
           </div>
         </section>
 

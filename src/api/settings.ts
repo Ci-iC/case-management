@@ -25,4 +25,10 @@ export const settingsApi = {
   testOpenAI() {
     return apiFetch<{ ok: true; message: string }>(`/api/settings/test-openai`, { method: 'POST' })
   },
+  testEmail(to: string) {
+    return apiFetch<{ ok: true; message: string }>(`/api/settings/test-email`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
+    })
+  },
 }

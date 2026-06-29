@@ -17,6 +17,7 @@ import {
 } from '../auth.js'
 import { chatCompletion } from '../openai.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
+import { notifyNewMessageEmail } from '../emailService.js'
 import { createContractWithCode } from './contracts.js'
 
 const r = Router()
@@ -551,6 +552,9 @@ r.post('/:id/submit', tmpUpload.array('attachments', 10), async (req, res, next)
       return { contractId: contractRow.id, messageId }
     })
 
+    // 提交法务的站内信已建，异步邮件通知（fire-and-forget，失败只记日志）
+    void notifyNewMessageEmail({ receiverId, title: '合同审核 · 待处理', body: messageBody })
+
     await writeAudit({
       actorId: req.user.id, action: 'review.submit',
       targetType: 'review', targetId: reviewRow.id,
@@ -631,6 +635,7 @@ r.post('/:id/legal-revision', requireCompanyRole('legal'), upload.single('file')
 
     let notifyMessageId = null
     let notifyError = null
+    let notifyBody = null
     const legalComment = req.body?.comment ? String(req.body.comment).trim() : ''
     if (review.created_by && review.created_by !== req.user.id) {
       try {
@@ -638,6 +643,7 @@ r.post('/:id/legal-revision', requireCompanyRole('legal'), upload.single('file')
           const baseBody =
             `您提交审核的合同《${review.uploaded_filename}》法务审核版已上传，请在本消息附件中下载查阅。`
           const finalBody = legalComment ? `${baseBody}\n\n【法务留言】\n${legalComment}` : baseBody
+          notifyBody = finalBody
           const [msgRow] = await trx('messages').insert({
             sender_id: req.user.id,
             receiver_id: review.created_by,
@@ -658,6 +664,8 @@ r.post('/:id/legal-revision', requireCompanyRole('legal'), upload.single('file')
             mime_type: req.file.mimetype,
           })
         })
+        // 站内信已建，异步邮件通知（fire-and-forget，失败只记日志）
+        if (notifyMessageId) void notifyNewMessageEmail({ receiverId: review.created_by, title: '合同审核 · 法务审核版已上传', body: notifyBody })
       } catch (e) { notifyError = e?.message || String(e) }
     }
 
@@ -693,6 +701,7 @@ r.post('/:id/legal-approve', requireCompanyRole('legal'), async (req, res, next)
 
     let notifyMessageId = null
     let notifyError = null
+    let notifyBody = null
     if (review.created_by && review.created_by !== req.user.id) {
       try {
         await db.transaction(async (trx) => {
@@ -700,6 +709,7 @@ r.post('/:id/legal-approve', requireCompanyRole('legal'), async (req, res, next)
             `您提交审核的合同《${review.uploaded_filename}》法务无修订意见，` +
             `当前版本可直接用于发起合同审批。`
           const finalBody = legalComment ? `${baseBody}\n\n【法务留言】\n${legalComment}` : baseBody
+          notifyBody = finalBody
           const [msgRow] = await trx('messages').insert({
             sender_id: req.user.id,
             receiver_id: review.created_by,
@@ -721,6 +731,8 @@ r.post('/:id/legal-approve', requireCompanyRole('legal'), async (req, res, next)
             })
           }
         })
+        // 站内信已建，异步邮件通知（fire-and-forget，失败只记日志）
+        if (notifyMessageId) void notifyNewMessageEmail({ receiverId: review.created_by, title: '合同审核 · 法务已通过', body: notifyBody })
       } catch (e) { notifyError = e?.message || String(e) }
     }
 

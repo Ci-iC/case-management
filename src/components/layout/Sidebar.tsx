@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, FileSearch, FolderOpen, CheckSquare, Mail, KeyRound, FileSignature, Bot } from 'lucide-react'
+import { Briefcase, Calendar, BarChart2, Settings, Scale, LogOut, FileSearch, FolderOpen, CheckSquare, Mail, KeyRound, FileSignature, Bot, AtSign } from 'lucide-react'
 import { messagesApi } from '@/api/messages'
 import { cn } from '@/utils/helpers'
 import { NAV_ITEMS } from '@/constants'
 import { useAuthStore } from '@/store/useAuthStore'
 import { canSeeCases, canSeeAllContracts } from '@/api/auth'
 import { ChangePasswordModal } from '@/components/auth/ChangePasswordModal'
+import { NotificationEmailModal } from '@/components/settings/NotificationEmailModal'
+import { EmailFeatureNoticeModal } from '@/components/settings/EmailFeatureNoticeModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
@@ -20,9 +22,22 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages }: SidebarProps) {
-  const { user, logout } = useAuthStore()
+  const { user, logout, dismissEmailNotice } = useAuthStore()
   const [pwdOpen, setPwdOpen] = useState(false)
+  const [notifEmailOpen, setNotifEmailOpen] = useState(false)
+  const [noticeOpen, setNoticeOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+
+  // 版本更新后首次登录：自动弹一次"邮件通知"功能介绍
+  useEffect(() => {
+    if (user && user.emailFeatureNoticeSeen === false) setNoticeOpen(true)
+  }, [user?.emailFeatureNoticeSeen, user?.id])
+
+  async function closeNotice(goSettings: boolean) {
+    setNoticeOpen(false)
+    try { await dismissEmailNotice() } catch { /* 忽略：下次仍可在设置里使用 */ }
+    if (goSettings) setNotifEmailOpen(true)
+  }
 
   useEffect(() => {
     let alive = true
@@ -135,6 +150,13 @@ export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages
               <p className="text-[11px] text-slate-400 truncate">{roleLabel}</p>
             </div>
             <button
+              onClick={() => setNotifEmailOpen(true)}
+              title="通知邮箱"
+              className="shrink-0 p-1.5 rounded-md text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
+            >
+              <AtSign size={14} />
+            </button>
+            <button
               onClick={() => setPwdOpen(true)}
               title="修改密码"
               className="shrink-0 p-1.5 rounded-md text-slate-400 hover:text-primary-600 hover:bg-primary-50 transition-colors"
@@ -153,6 +175,12 @@ export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages
       </aside>
 
       <ChangePasswordModal open={pwdOpen} onClose={() => setPwdOpen(false)} />
+      <NotificationEmailModal open={notifEmailOpen} onClose={() => setNotifEmailOpen(false)} />
+      <EmailFeatureNoticeModal
+        open={noticeOpen}
+        onDismiss={() => closeNotice(false)}
+        onGoSettings={() => closeNotice(true)}
+      />
     </>
   )
 }

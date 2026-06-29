@@ -28,6 +28,7 @@ import {
 } from '../auth.js'
 import { chatCompletion } from '../openai.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink, wordOnlyFileFilter } from '../storage.js'
+import { notifyNewMessageEmail } from '../emailService.js'
 
 const execFileP = promisify(execFile)
 
@@ -247,6 +248,8 @@ async function sendApprovalNotice(trx, { approvalId, senderId, recipientId, body
     company_id: companyId,
     is_read: false,
   })
+  // 异步邮件通知（fire-and-forget，失败只记日志，绝不影响审批/站内信流程）
+  void notifyNewMessageEmail({ receiverId: recipientId, title: '合同审批通知', body })
 }
 
 function buildNoticeBody({ contract, action, actorName, extra, isSealNode }) {

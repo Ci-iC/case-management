@@ -19,6 +19,10 @@ interface AuthState {
    *  opts.reload 默认 true（整页刷新）；超管"数据查询"按公司查数据时传 false，避免跳出当前面板 */
   switchCompany: (companyId: string, opts?: { reload?: boolean }) => Promise<void>
   clearSessionRevoked: () => void
+  /** 自助更新个人设置（通知邮箱 + 邮件通知开关），成功后同步本地 user */
+  updateProfile: (payload: { notificationEmail?: string; emailNotifyEnabled?: boolean }) => Promise<void>
+  /** 关闭"邮件通知功能"首登弹窗（标记已看过） */
+  dismissEmailNotice: () => Promise<void>
 }
 
 const SESSION_REVOKED_MESSAGE =
@@ -94,6 +98,18 @@ export const useAuthStore = create<AuthState>()(persist((set, get) => ({
 
   clearSessionRevoked() {
     set({ sessionRevokedMessage: null })
+  },
+
+  async updateProfile(payload) {
+    const res = await authApi.updateProfile(payload)
+    const { user } = get()
+    if (user) set({ user: { ...user, notificationEmail: res.notificationEmail, emailNotifyEnabled: res.emailNotifyEnabled } })
+  },
+
+  async dismissEmailNotice() {
+    await authApi.dismissEmailNotice()
+    const { user } = get()
+    if (user) set({ user: { ...user, emailFeatureNoticeSeen: true } })
   },
 }), {
   name: 'case-management-auth',

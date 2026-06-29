@@ -26,6 +26,10 @@ export interface AuthUser {
   currentCompany?: UserCompanyAssignment | null
   companyRoles?: CompanyRole[]
   isAllCompaniesView?: boolean
+  // 邮件通知（个人设置 + 首登介绍弹窗）
+  notificationEmail?: string | null
+  emailNotifyEnabled?: boolean
+  emailFeatureNoticeSeen?: boolean
 }
 
 export function isSuperAdmin(user: { role?: string } | null | undefined): boolean {
@@ -94,5 +98,18 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
     })
+  },
+
+  /** 自助更新个人设置：通知邮箱 + 个人邮件通知开关 */
+  updateProfile(payload: { notificationEmail?: string; emailNotifyEnabled?: boolean }) {
+    return apiFetch<{ notificationEmail: string | null; emailNotifyEnabled: boolean }>('/api/auth/me', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /** 标记"邮件通知功能介绍弹窗"已看过 */
+  dismissEmailNotice() {
+    return apiFetch<{ ok: true }>('/api/auth/dismiss-email-notice', { method: 'POST' })
   },
 }

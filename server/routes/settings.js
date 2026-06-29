@@ -3,6 +3,7 @@
 import { Router } from 'express'
 import { db, writeAudit } from '../db.js'
 import { requireAuth, requirePlatformAdmin } from '../auth.js'
+import { encryptSecret } from '../appSettings.js'
 
 const r = Router()
 // v2.0: 系统设置（OpenAI Key、合同摘要 prompt 等）是平台级配置，仅平台超管可读写
@@ -16,10 +17,19 @@ const ALLOWED_KEYS = new Set([
   'openai_model_default',
   // v1.3：合同审批界面 AI 摘要的 system prompt（超管可调）
   'contract_summary_prompt',
+  // 邮件通知配置（全部存 DB，不走 .env）
+  'email_enabled',     // '1' / '0'
+  'email_from',        // 发信邮箱
+  'smtp_host',         // SMTP 服务器
+  'smtp_port',         // 端口
+  'smtp_auth_code',    // SMTP 授权码（AES 加密存储）
+  'app_base_url',      // 系统访问域名，用于邮件跳转链接
 ])
 
 // 敏感字段：GET 时返回 mask；PUT 时如果还是 mask 则不更新
-const SECRET_KEYS = new Set(['openai_api_key'])
+const SECRET_KEYS = new Set(['openai_api_key', 'smtp_auth_code'])
+// 需 AES 加密存储的字段（区别于仅 mask 显示的 openai_api_key——后者为兼容历史仍明文存）
+const ENCRYPTED_KEYS = new Set(['smtp_auth_code'])
 const MASK_PLACEHOLDER = '__MASKED__'
 
 function maskIfSecret(key, value) {
@@ -84,14 +94,17 @@ r.put('/:key', async (req, res, next) => {
       return res.json({ setting: row ? settingPayload(row) : settingPayload({ key, value: '' }) })
     }
 
+    // 加密字段：明文进来 → AES 加密后入库（DB 里绝不出现明文授权码）
+    const storedValue = ENCRYPTED_KEYS.has(key) ? encryptSecret(value) : value
+
     const existing = await db('app_settings').where({ key }).first()
     if (existing) {
       await db('app_settings').where({ key }).update({
-        value, updated_at: new Date(), updated_by: req.user.id,
+        value: storedValue, updated_at: new Date(), updated_by: req.user.id,
       })
     } else {
       await db('app_settings').insert({
-        key, value, updated_at: new Date(), updated_by: req.user.id,
+        key, value: storedValue, updated_at: new Date(), updated_by: req.user.id,
       })
     }
 
@@ -115,6 +128,18 @@ r.post('/test-openai', async (_req, res, next) => {
       user: 'ping',
     })
     res.json({ ok: true, message: '连接成功' })
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e instanceof Error ? e.message : String(e) })
+  }
+})
+
+// POST /api/settings/test-email — body: { to } 用当前 DB 邮件配置发一封测试邮件
+r.post('/test-email', async (req, res) => {
+  try {
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim() : ''
+    const { sendTestEmail } = await import('../emailService.js')
+    await sendTestEmail(to)
+    res.json({ ok: true, message: `测试邮件已发送至 ${to}，请查收（含垃圾箱）` })
   } catch (e) {
     res.status(400).json({ ok: false, error: e instanceof Error ? e.message : String(e) })
   }

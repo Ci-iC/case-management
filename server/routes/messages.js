@@ -13,6 +13,7 @@ import path from 'node:path'
 import { db, writeAudit } from '../db.js'
 import { requireAuth, requireCompanyContext, hasCompanyRole } from '../auth.js'
 import { DATA_ROOT, ensureDir, toStoragePath, toAbsolutePath, safeFilename, safeUnlink } from '../storage.js'
+import { notifyNewMessageEmail } from '../emailService.js'
 import fs from 'node:fs/promises'
 
 const r = Router()
@@ -168,6 +169,9 @@ r.post('/', upload.array('attachments', 10), async (req, res, next) => {
       }
       return messageId
     })
+
+    // 站内信已提交，异步邮件通知（fire-and-forget，失败只记日志）
+    void notifyNewMessageEmail({ receiverId, title: '你有一条新留言', body: String(body).trim() })
 
     const row = await joinMsg(db.select(MSG_SELECT)).where('m.id', result).first()
     await writeAudit({

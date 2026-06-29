@@ -65,7 +65,8 @@ r.post('/login', loginLimiter, async (req, res, next) => {
     if (!username || !password) return res.status(400).json({ error: '请输入账号和密码' })
 
     const row = await db('users')
-      .select('id', 'username', 'password_hash', 'role', 'display_name', 'token_version', 'must_change_password', 'created_at')
+      .select('id', 'username', 'password_hash', 'role', 'display_name', 'token_version', 'must_change_password', 'created_at',
+        'notification_email', 'email_notify_enabled', 'email_feature_notice_seen')
       .where({ username })
       .whereNull('deleted_at')
       .first()
@@ -109,6 +110,10 @@ r.post('/login', loginLimiter, async (req, res, next) => {
       currentCompanyId,
       currentCompany: currentCompanyId ? companies.find(c => c.companyId === currentCompanyId) || null : null,
       isAllCompaniesView: false,
+      // 邮件通知（首登介绍弹窗依赖 emailFeatureNoticeSeen）
+      notificationEmail: row.notification_email || null,
+      emailNotifyEnabled: row.email_notify_enabled !== false,
+      emailFeatureNoticeSeen: !!row.email_feature_notice_seen,
     }
     const token = signToken({ id: row.id, username: row.username, role: row.role }, newTokenVersion, currentCompanyId)
     await writeAudit({ actorId: userPayload.id, action: 'auth.login', targetType: 'user', targetId: userPayload.id })
@@ -136,8 +141,49 @@ r.get('/me', requireAuth, async (req, res, next) => {
         currentCompany,
         companyRoles: req.user.companyRoles,
         isAllCompaniesView: req.user.isAllCompaniesView,
+        // 邮件通知（个人设置 + 首登介绍弹窗）
+        notificationEmail: req.user.notificationEmail,
+        emailNotifyEnabled: req.user.emailNotifyEnabled,
+        emailFeatureNoticeSeen: req.user.emailFeatureNoticeSeen,
       },
     })
+  } catch (e) { next(e) }
+})
+
+// PATCH /api/auth/me — 用户自助更新个人设置（通知邮箱 + 个人邮件通知开关）
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+r.patch('/me', requireAuth, async (req, res, next) => {
+  try {
+    const update = {}
+    if ('notificationEmail' in (req.body || {})) {
+      const raw = req.body.notificationEmail
+      const email = typeof raw === 'string' ? raw.trim() : ''
+      if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: '邮箱格式不正确' })
+      if (email.length > 254) return res.status(400).json({ error: '邮箱过长' })
+      update.notification_email = email || null
+    }
+    if ('emailNotifyEnabled' in (req.body || {})) {
+      update.email_notify_enabled = !!req.body.emailNotifyEnabled
+    }
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: '没有可更新的字段' })
+    }
+    await db('users').where({ id: req.user.id }).update(update)
+    const row = await db('users')
+      .select('notification_email', 'email_notify_enabled')
+      .where({ id: req.user.id }).first()
+    res.json({
+      notificationEmail: row.notification_email || null,
+      emailNotifyEnabled: row.email_notify_enabled !== false,
+    })
+  } catch (e) { next(e) }
+})
+
+// POST /api/auth/dismiss-email-notice — 标记"邮件通知功能介绍弹窗"已看过（首登只弹一次）
+r.post('/dismiss-email-notice', requireAuth, async (req, res, next) => {
+  try {
+    await db('users').where({ id: req.user.id }).update({ email_feature_notice_seen: true })
+    res.json({ ok: true })
   } catch (e) { next(e) }
 })
 
@@ -254,6 +300,9 @@ r.post('/change-password', requireAuth, async (req, res, next) => {
       currentCompany: req.user.currentCompanyId
         ? companies.find(c => c.companyId === req.user.currentCompanyId) || null : null,
       isAllCompaniesView: req.user.isAllCompaniesView,
+      notificationEmail: req.user.notificationEmail,
+      emailNotifyEnabled: req.user.emailNotifyEnabled,
+      emailFeatureNoticeSeen: req.user.emailFeatureNoticeSeen,
     }
     const token = signToken(
       { id: req.user.id, username: row.username, role: row.role },

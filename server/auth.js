@@ -83,7 +83,8 @@ export async function requireAuth(req, res, next) {
     if (!payload) return res.status(401).json({ error: '登录已过期，请重新登录' })
 
     const user = await db('users')
-      .select('id', 'username', 'role', 'display_name', 'token_version', 'must_change_password', 'created_at')
+      .select('id', 'username', 'role', 'display_name', 'token_version', 'must_change_password', 'created_at',
+        'notification_email', 'email_notify_enabled', 'email_feature_notice_seen')
       .where({ id: payload.sub })
       .whereNull('deleted_at')  // v1.3.2: 已软删除的用户即便 token 未过期也不能继续使用
       .first()
@@ -140,6 +141,10 @@ export async function requireAuth(req, res, next) {
       displayName: user.display_name,
       mustChangePassword: !!user.must_change_password,
       createdAt: user.created_at instanceof Date ? user.created_at.toISOString() : user.created_at,
+      // 邮件通知
+      notificationEmail: user.notification_email || null,
+      emailNotifyEnabled: user.email_notify_enabled !== false,
+      emailFeatureNoticeSeen: !!user.email_feature_notice_seen,
       // v2.0 公司上下文
       currentCompanyId,
       companyRoles,
