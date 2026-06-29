@@ -72,8 +72,12 @@ function buildTransport(cfg) {
   return nodemailer.createTransport({
     host: cfg.host,
     port: cfg.port,
-    secure: cfg.port === 465,          // 465 = SSL；587/25 = STARTTLS
+    secure: cfg.port === 465 || cfg.port === 994,  // 465/994 = 隐式 SSL；587/25 = STARTTLS
     auth: { user: cfg.from, pass: cfg.authCode },
+    // 设超时，避免端口被网络拦截时无限等待（前端测试一直"转圈"）；失败会快速抛出明确错误
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   })
 }
 

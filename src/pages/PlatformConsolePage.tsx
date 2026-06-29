@@ -1,21 +1,23 @@
 import { useState } from 'react'
-import { Scale, LogOut, Building2, Users, Workflow, Settings as SettingsIcon, BarChart3, KeyRound } from 'lucide-react'
+import { Scale, LogOut, Building2, Users, Workflow, Settings as SettingsIcon, BarChart3, KeyRound, BookText } from 'lucide-react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { cn } from '@/utils/helpers'
 import { CompaniesAdminPanel } from '@/components/admin/CompaniesAdminPanel'
 import { AccountsAdminPanel } from '@/components/admin/AccountsAdminPanel'
 import { PipelinesAdminPanel } from '@/components/admin/PipelinesAdminPanel'
 import { PlatformSettingsPanel } from '@/components/admin/PlatformSettingsPanel'
+import { ContractTemplatesPanel } from '@/components/admin/ContractTemplatesPanel'
 import { CrossCompanyQueryPanel } from '@/components/admin/CrossCompanyQueryPanel'
 import { ChangePasswordModal } from '@/components/auth/ChangePasswordModal'
 
-type Tab = 'companies' | 'accounts' | 'pipelines' | 'settings' | 'query'
+type Tab = 'companies' | 'accounts' | 'pipelines' | 'templates' | 'settings' | 'query'
 
 const TABS: Array<{ key: Tab; label: string; icon: typeof Building2 }> = [
   { key: 'companies', label: '企业管理', icon: Building2 },
   { key: 'accounts', label: '账号管理', icon: Users },
   { key: 'pipelines', label: 'AI 审核模型', icon: Workflow },
   { key: 'query', label: '数据查询', icon: BarChart3 },
+  { key: 'templates', label: '合同模板', icon: BookText },
   { key: 'settings', label: '平台设置', icon: SettingsIcon },
 ]
 
@@ -95,6 +97,7 @@ export function PlatformConsolePage() {
         {tab === 'accounts' && <AccountsAdminPanel />}
         {tab === 'pipelines' && <PipelinesAdminPanel />}
         {tab === 'query' && <CrossCompanyQueryPanel />}
+        {tab === 'templates' && <ContractTemplatesPanel />}
         {tab === 'settings' && <PlatformSettingsPanel />}
       </main>
 
