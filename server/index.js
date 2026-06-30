@@ -59,8 +59,19 @@ app.use('/api/contract-templates', contractTemplateRoutes)   // 合同模板库�
 
 const distDir = path.resolve(__dirname, '..', 'dist')
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir))
+  app.use(express.static(distDir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        // index.html 必须每次向服务器校验，部署后立即指向最新带哈希的资源（杜绝"部署后要硬刷新"）
+        res.setHeader('Cache-Control', 'no-cache')
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        // /assets 下是带内容哈希的文件，内容一变哈希就变，可安全永久缓存
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+    },
+  }))
   app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')   // SPA 回退的 index.html 同样不缓存
     res.sendFile(path.join(distDir, 'index.html'))
   })
 }
