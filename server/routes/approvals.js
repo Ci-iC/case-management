@@ -131,6 +131,19 @@ async function extractTextFromFile(absPath, mimeType, originalName) {
     const doc = await extractor.extract(absPath)
     return (doc.getBody() || '').trim()
   }
+  if (ext === '.pdf' || mimeType === 'application/pdf') {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const buf = await fs.readFile(absPath)
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise
+    const parts = []
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i)
+      const content = await page.getTextContent()
+      parts.push(content.items.map(it => ('str' in it) ? it.str : '').join(' '))
+    }
+    await doc.destroy()
+    return parts.join('\n').trim()
+  }
   return ''
 }
 
@@ -1330,35 +1343,42 @@ r.get('/:id/export-watermark-pdf', async (req, res, next) => {
     if (!company) return res.status(404).json({ error: '公司不存在' })
     const watermarkText = company.name
 
-    // 3. LibreOffice 转 PDF（临时目录）
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watermark-'))
-    const sofficeBin = resolveLibreOfficePath()
-    // 独立 user profile，避免与本机其他 LibreOffice 实例的 profile 锁冲突导致转换失败
-    const profileUrl = pathToFileURL(path.join(tmpDir, 'lo-profile')).href
-    try {
-      await execFileP(sofficeBin, [
-        '-env:UserInstallation=' + profileUrl,
-        '--headless',
-        '--convert-to', 'pdf',
-        '--outdir', tmpDir,
-        cleanAbs,
-      ], { timeout: 90_000 })
-    } catch (e) {
-      console.error('[watermark] libreoffice convert failed:', e?.message || e)
-      throw Object.assign(new Error(
-        'Word → PDF 转换失败：' + (e?.code === 'ENOENT'
-          ? '未找到 LibreOffice，请在服务器安装（apt install libreoffice）或设置 LIBREOFFICE_PATH 环境变量'
-          : (e?.message || '未知错误'))
-      ), { status: 500 })
-    }
-
-    // LibreOffice 输出文件名 = <原文件名去扩展名>.pdf
-    const baseName = path.parse(cleanAbs).name
-    const pdfPath = path.join(tmpDir, `${baseName}.pdf`)
+    // 3. 得到待加水印的 PDF 字节。
+    //    清洁版本身就是 PDF → 直接读，跳过 LibreOffice（PDF→PDF 转换既多余又不可靠）。
+    //    清洁版是 Word → 用 LibreOffice 转 PDF（临时目录）。
+    const isPdfClean = path.extname(cleanAbs).toLowerCase() === '.pdf'
     let pdfBytes
-    try { pdfBytes = await fs.readFile(pdfPath) }
-    catch {
-      throw Object.assign(new Error('LibreOffice 转换完成但找不到输出 PDF 文件'), { status: 500 })
+    if (isPdfClean) {
+      pdfBytes = await fs.readFile(cleanAbs)
+    } else {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'watermark-'))
+      const sofficeBin = resolveLibreOfficePath()
+      // 独立 user profile，避免与本机其他 LibreOffice 实例的 profile 锁冲突导致转换失败
+      const profileUrl = pathToFileURL(path.join(tmpDir, 'lo-profile')).href
+      try {
+        await execFileP(sofficeBin, [
+          '-env:UserInstallation=' + profileUrl,
+          '--headless',
+          '--convert-to', 'pdf',
+          '--outdir', tmpDir,
+          cleanAbs,
+        ], { timeout: 90_000 })
+      } catch (e) {
+        console.error('[watermark] libreoffice convert failed:', e?.message || e)
+        throw Object.assign(new Error(
+          'Word → PDF 转换失败：' + (e?.code === 'ENOENT'
+            ? '未找到 LibreOffice，请在服务器安装（apt install libreoffice）或设置 LIBREOFFICE_PATH 环境变量'
+            : (e?.message || '未知错误'))
+        ), { status: 500 })
+      }
+
+      // LibreOffice 输出文件名 = <原文件名去扩展名>.pdf
+      const baseName = path.parse(cleanAbs).name
+      const pdfPath = path.join(tmpDir, `${baseName}.pdf`)
+      try { pdfBytes = await fs.readFile(pdfPath) }
+      catch {
+        throw Object.assign(new Error('LibreOffice 转换完成但找不到输出 PDF 文件'), { status: 500 })
+      }
     }
 
     // 4. pdf-lib 加水印

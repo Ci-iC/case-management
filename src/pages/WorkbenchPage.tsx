@@ -149,10 +149,10 @@ export default function WorkbenchPage({ onNavigate }: WorkbenchPageProps = {}) {
     const ok: File[] = []
     let rejected = 0
     for (const f of Array.from(list)) {
-      if (/\.(docx?|txt)$/i.test(f.name)) ok.push(f)
+      if (/\.(docx?|txt|pdf)$/i.test(f.name)) ok.push(f)
       else rejected++
     }
-    if (rejected > 0) setError('参考文件仅支持 Word（.doc/.docx）或文本（.txt），已忽略其他文件')
+    if (rejected > 0) setError('参考文件仅支持 Word（.doc/.docx）、PDF（.pdf）或文本（.txt），已忽略其他文件')
     if (ok.length > 0) setStaged((prev) => [...prev, ...ok].slice(0, 5))
   }
 
@@ -356,7 +356,7 @@ export default function WorkbenchPage({ onNavigate }: WorkbenchPageProps = {}) {
               </div>
             )}
             <div className="flex items-end gap-2">
-              <input ref={fileRef} type="file" multiple accept=".doc,.docx,.txt" className="hidden"
+              <input ref={fileRef} type="file" multiple accept=".doc,.docx,.txt,.pdf" className="hidden"
                 onChange={(e) => { addStaged(e.target.files || []); if (fileRef.current) fileRef.current.value = '' }} />
               <button type="button" title="添加文件" onClick={() => fileRef.current?.click()} disabled={busy}
                 className="shrink-0 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-primary-600 disabled:opacity-50">
@@ -376,7 +376,7 @@ export default function WorkbenchPage({ onNavigate }: WorkbenchPageProps = {}) {
               </Button>
             </div>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-400">Enter 发送，Shift+Enter 换行 · 拖拽或点 <Upload size={11} className="inline -mt-0.5" /> 添加 Word/txt，随消息一起发送</p>
+          <p className="mt-1.5 text-[11px] text-slate-400">Enter 发送，Shift+Enter 换行 · 拖拽或点 <Upload size={11} className="inline -mt-0.5" /> 添加 Word/PDF/txt，随消息一起发送</p>
         </div>
       </div>
 

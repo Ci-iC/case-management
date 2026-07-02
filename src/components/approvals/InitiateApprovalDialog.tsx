@@ -412,7 +412,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-slate-800">上传新清洁版</p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">仅支持 Word（.doc / .docx）；上传后自动提取合同信息</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">支持 Word（.doc / .docx）或 PDF（.pdf）；上传后自动提取合同信息</p>
                   {cleanMode === 'new' && (
                     <>
                       {/* 已载入清洁版（含 AI 工作台自动抓取的）→ 显示文件名，避免因原生 file 控件显示"未选择文件"而误以为还要再传 */}
@@ -424,7 +424,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
                       )}
                       <input
                         type="file"
-                        accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
                         onChange={e => {
                           const f = e.target.files?.[0] || null
                           setCleanFile(f)
@@ -433,7 +433,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
                         className="mt-1.5 block text-xs"
                       />
                       <p className="mt-1 text-[11px] text-slate-400">
-                        {cleanFile ? '已有清洁版，如需更换可重新选择文件；否则无需再上传。' : '请选择清洁版 Word 文件。'}
+                        {cleanFile ? '已有清洁版，如需更换可重新选择文件；否则无需再上传。' : '请选择清洁版文件（Word 或 PDF）。'}
                       </p>
                     </>
                   )}

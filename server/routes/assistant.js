@@ -24,8 +24,8 @@ const ATT_ROOT = path.join(DATA_ROOT, 'assistant-att')
 
 function fileFilter(_req, file, cb) {
   const ext = path.extname(file.originalname || '').toLowerCase()
-  if (ext === '.doc' || ext === '.docx' || ext === '.txt') return cb(null, true)
-  const err = new Error('参考文件只支持 Word（.doc/.docx）或文本（.txt）'); err.status = 400; cb(err)
+  if (ext === '.doc' || ext === '.docx' || ext === '.txt' || ext === '.pdf') return cb(null, true)
+  const err = new Error('参考文件只支持 Word（.doc/.docx）、PDF（.pdf）或文本（.txt）'); err.status = 400; cb(err)
 }
 
 const upload = multer({
