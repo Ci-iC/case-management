@@ -119,7 +119,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
               <CheckSquare size={32} className="mx-auto mb-2 text-slate-300" />
               <p className="text-sm">{tab === 'todo' ? '当前没有待你审批的合同' : '你还没有发起过审批'}</p>
               {tab === 'initiated' && (
-                <p className="mt-1 text-xs">点击右上角「发起审批」从已经法务审核过的合同发起</p>
+                <p className="mt-1 text-xs">点击右上角「发起审批」从起草中的合同发起</p>
               )}
             </div>
           </div>

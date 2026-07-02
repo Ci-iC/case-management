@@ -344,7 +344,7 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
         <div className="flex items-center gap-2">
           <FolderOpen size={18} className="text-primary-600" />
           <h1 className="text-base font-semibold text-slate-900">合同台账</h1>
-          <span className="text-xs text-slate-400">所有审核过的合同 + 历史版本</span>
+          <span className="text-xs text-slate-400">所有合同 + 历史版本</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">

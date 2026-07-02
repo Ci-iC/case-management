@@ -36,6 +36,10 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingContracts, setLoadingContracts] = useState(false)
+  // "不经审核直接发起"：用上传的清洁版新建一份合同直接发起审批（合同直到点"发起"才真正创建，避免占用编号）
+  const [directNew, setDirectNew] = useState(false)
+  // directNew 提交时创建的合同 id：记住它，若后续步骤失败重试不重复建合同
+  const createdContractIdRef = useRef<string | null>(null)
 
   // 模板预览状态
   const [preview, setPreview] = useState<TemplatePreview | null>(null)
@@ -68,7 +72,10 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     setPreview(null)
     setPreviewError(null)
     setAssignments({})
+    setDirectNew(false)
+    createdContractIdRef.current = null
     setLoadingContracts(true)
+    // 仅"起草中"的合同可发起审批（含被驳回退回起草中的）；审批中/已完成审批的合同不列出
     contractsApi.list({ status: 'drafting' })
       .then(({ contracts }) => setContracts(contracts))
       .catch(e => setError(e instanceof Error ? e.message : '加载合同失败'))
@@ -98,13 +105,16 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
   }
 
   // 以清洁版为准跑 AI 提取（新上传的清洁版文件，或沿用合同已存清洁版）
+  //   directNew 时合同还没建，走无合同版提取端点
   async function runExtractFromClean(opts: { cleanFile?: File; reuseExistingClean?: boolean }) {
-    if (!contractId) return
+    if (!directNew && !contractId) return
     const sc = contracts.find(c => c.id === contractId)
     setAutoExtracting(true)
     setExtractError(null)
     try {
-      const { fields: f } = await contractsApi.extractFields(contractId, opts)
+      const { fields: f } = directNew
+        ? await contractsApi.extractFieldsNew({ cleanFile: opts.cleanFile! })
+        : await contractsApi.extractFields(contractId, opts)
       applyFields({
         contractName: f.contractName || sc?.name || '',
         ourParties: f.ourParties || [],
@@ -125,29 +135,31 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     }
   }
 
-  // 选定合同 → 拉模板预览 + 预填已存字段。注意：AI 提取不在这里跑，改由“上传/沿用清洁版”触发
+  // 选定合同（或勾选"不经审核直接发起"）→ 拉模板预览 + 预填字段。
+  //   注意：AI 提取不在这里跑，改由“上传/沿用清洁版”触发
   useEffect(() => {
-    if (!contractId) {
+    // 既没选合同、也没勾直接发起 → 清空
+    if (!contractId && !directNew) {
       applyFields({})
       setPreview(null)
       setPreviewError(null)
       setAssignments({})
       return
     }
-    const sc = contracts.find(c => c.id === contractId)
-    if (!sc) return
+    const sc = contractId ? contracts.find(c => c.id === contractId) : undefined
+    if (contractId && !sc) return
 
-    // 切合同 → 重置清洁版选择与提取提示（需重新上传/沿用清洁版才会提取）
+    // 切换来源 → 重置清洁版选择与提取提示（需重新上传/沿用清洁版才会提取）
     setCleanFile(null)
     setCleanMode('new')
     setExtractError(null)
 
-    // 模板预览
+    // 模板预览（directNew 时不带 contractId，按公司预览）
     setLoadingPreview(true)
     setPreviewError(null)
     setPreview(null)
     setAssignments({})
-    approvalsApi.templatePreview(contractId)
+    approvalsApi.templatePreview(contractId || undefined)
       .then((pv) => {
         setPreview(pv)
         // 单人角色自动填，多人留空
@@ -160,25 +172,27 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
       .catch(e => setPreviewError(e instanceof ApiError ? e.message : '加载审批流模板失败'))
       .finally(() => setLoadingPreview(false))
 
-    // 已有结构化字段 → 预填卡片（上传/沿用清洁版后会重新提取覆盖）；否则留空待提取
-    if (sc.contractType || sc.paymentType) {
-      prefillFromContract(sc)
+    // 预填卡片：directNew 留空待 AI 按清洁版提取；已有结构化字段的合同直接带出；否则只带合同名
+    if (directNew) {
+      applyFields({ contractName: '', handlerId: me?.id || null })
+    } else if (sc!.contractType || sc!.paymentType) {
+      prefillFromContract(sc!)
     } else {
-      applyFields({ contractName: sc.name, handlerId: me?.id || null })
+      applyFields({ contractName: sc!.name, handlerId: me?.id || null })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contractId, contracts, me?.id])
+  }, [contractId, directNew, contracts, me?.id])
 
   // AI 工作台传入清洁版：待合同选定 + 模板预览就绪后，自动套用为新清洁版并跑一次 AI 提取（每次打开仅一次）
   useEffect(() => { if (!open) prefillCleanDoneRef.current = false }, [open])
   useEffect(() => {
-    if (!open || !prefillCleanFile || !contractId || !preview || prefillCleanDoneRef.current) return
+    if (!open || !prefillCleanFile || (!contractId && !directNew) || !preview || prefillCleanDoneRef.current) return
     prefillCleanDoneRef.current = true
     setCleanMode('new')
     setCleanFile(prefillCleanFile)
     void runExtractFromClean({ cleanFile: prefillCleanFile })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, prefillCleanFile, contractId, preview])
+  }, [open, prefillCleanFile, contractId, directNew, preview])
 
   function validateFields(): string | null {
     if (!fields.contractName || !fields.contractName.trim()) return '请填写合同名称'
@@ -206,9 +220,17 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     return null
   }
 
+  // 勾选/取消"不经审核直接发起"：清掉已选合同，交由上面的 effect 重新加载模板并按清洁版提取
+  function onToggleDirectNew(v: boolean) {
+    setDirectNew(v)
+    setError(null)
+    setContractId('')
+    prefillCleanDoneRef.current = false   // 允许对已上传的清洁版重新触发一次自动提取
+  }
+
   async function onSubmit() {
-    if (!contractId) { setError('请选择合同'); return }
     if (previewError) { setError(previewError); return }
+    if (!directNew && !contractId) { setError('请选择合同'); return }
 
     const fieldErr = validateFields()
     if (fieldErr) { setError(fieldErr); return }
@@ -216,17 +238,29 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     const assignErr = validateAssignments()
     if (assignErr) { setError(assignErr); return }
 
-    const sc = contracts.find(c => c.id === contractId)
-    if (cleanMode === 'reuse') {
-      if (!sc?.cleanFilename) { setError('该合同没有可沿用的清洁版，请上传新清洁版'); return }
-    } else {
+    // directNew 只能上传新清洁版（合同尚不存在，无可沿用）；否则按 cleanMode 校验
+    if (directNew || cleanMode === 'new') {
       if (!cleanFile) { setError('请上传清洁版文件'); return }
+    } else {
+      const sc = contracts.find(c => c.id === contractId)
+      if (!sc?.cleanFilename) { setError('该合同没有可沿用的清洁版，请上传新清洁版'); return }
     }
 
     setSubmitting(true)
     setError(null)
     try {
-      await contractsApi.saveDraft(contractId, {
+      // directNew：此刻才真正创建合同（占用一个正式编号），失败重试不重复建
+      let cid = contractId
+      if (directNew) {
+        if (!createdContractIdRef.current) {
+          const name = fields.contractName?.trim() || cleanFile?.name || '新建合同'
+          const { contract } = await contractsApi.create({ name })
+          createdContractIdRef.current = contract.id
+        }
+        cid = createdContractIdRef.current
+      }
+
+      await contractsApi.saveDraft(cid, {
         ...fields,
         name: fields.contractName?.trim() || undefined,
         handlerId: me?.id || fields.handlerId || undefined,
@@ -238,11 +272,11 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
       }))
 
       const { approvalId } = await approvalsApi.initiate({
-        contractId,
+        contractId: cid,
         stepAssignments,
         initiationNote: note.trim() || undefined,
-        reuseExistingClean: cleanMode === 'reuse',
-        cleanFile: cleanMode === 'new' ? cleanFile! : undefined,
+        reuseExistingClean: !directNew && cleanMode === 'reuse',
+        cleanFile: (directNew || cleanMode === 'new') ? cleanFile! : undefined,
       })
       onInitiated(approvalId)
     } catch (e) {
@@ -273,6 +307,8 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
   if (!open) return null
 
   const selectedContract = contracts.find(c => c.id === contractId)
+  // 是否展示后续表单（清洁版/字段/审批流）：选了现有合同、或勾选了"不经审核直接发起"
+  const showForm = !!selectedContract || directNew
   const hasBlockingError = !!previewError ||
     (preview != null && preview.steps.some(s => s.candidates.length === 0))
 
@@ -280,13 +316,29 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
     <Modal open={open} onClose={onClose} title="发起合同审批">
       <div className="w-[640px] max-w-full space-y-4 max-h-[80vh] overflow-y-auto pr-1">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">合同 *</label>
-          {loadingContracts ? (
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="block text-xs font-medium text-slate-600">合同 *</label>
+            {!prefillContractId && (
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={directNew}
+                  onChange={e => onToggleDirectNew(e.target.checked)}
+                />
+                不经审核直接发起（用上传的清洁版新建合同）
+              </label>
+            )}
+          </div>
+          {directNew ? (
+            <select className="form-select bg-slate-100 text-slate-400 cursor-not-allowed" disabled value="">
+              <option value="">（将根据上传的清洁版新建合同并直接发起，无需选择现有合同）</option>
+            </select>
+          ) : loadingContracts ? (
             <p className="text-xs text-slate-400">加载中…</p>
           ) : contracts.length === 0 ? (
             <p className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-              当前没有可发起审批的合同。<br />
-              发起审批要求合同处于"起草中"状态且已经过法务审核（已上传法务修订版）。
+              当前没有可发起审批的"起草中"合同。<br />
+              可勾选右上角"不经审核直接发起"，用上传的清洁版新建合同并直接发起审批。
             </p>
           ) : (
             <select
@@ -303,6 +355,11 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
               ))}
             </select>
           )}
+          {directNew && (
+            <p className="mt-1 text-[11px] text-amber-600">
+              未经法务审核，直接发起审批。AI 会按上传的清洁版自动填好下方字段，请核对后再发起。
+            </p>
+          )}
           {selectedContract && (
             <p className="mt-1 text-[11px] text-slate-400">
               已审 {selectedContract.versionCount} 次 · 创建人 {selectedContract.createdByDisplayName || selectedContract.createdByUsername || '—'}
@@ -311,7 +368,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
         </div>
 
         {/* v1.3.1 清洁版上传（v2.1+: 置于最上方，发起前先确认待审批文件） */}
-        {selectedContract && (
+        {showForm && (
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
               清洁版 *
@@ -320,7 +377,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
               </span>
             </label>
             <div className="space-y-2">
-              {selectedContract.cleanFilename && (
+              {selectedContract && selectedContract.cleanFilename && (
                 <label className="flex items-start gap-2 rounded border border-slate-200 px-3 py-2 cursor-pointer hover:bg-slate-50 has-[:checked]:bg-blue-50 has-[:checked]:border-blue-300">
                   <input
                     type="radio"
@@ -374,7 +431,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
           </div>
         )}
 
-        {selectedContract && (
+        {showForm && (
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-slate-700">合同结构化信息</p>
@@ -400,7 +457,7 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
         )}
 
         {/* v2.1 审批流模板预览 + 审批人指派 */}
-        {selectedContract && (
+        {showForm && (
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
               审批流程 *

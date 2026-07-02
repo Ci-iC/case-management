@@ -629,9 +629,12 @@ export const TOOLS = [
   {
     name: 'initiate_approval',
     kind: 'write',
+    // autoConfirm：发起审批只是打开表单填写，填表本身不影响他人（真正提交由表单内二次操作），
+    // 故确定意图后直接打开表单，无需先弹"确认执行"卡。
+    autoConfirm: true,
     label: '发起合同审批',
     requiredRoles: null,
-    description: '弹出"发起审批"表单：自动列可发起合同、沿用/上传清洁版、按模板列审批人供用户确认。别自己查状态、别因"起草中"拒绝；args 可留空，字段都在表单里填。',
+    description: '弹出"发起审批"表单：自动列可发起合同、沿用/上传清洁版、按模板列审批人供用户确认；表单里还可勾选"不经审核直接发起"用上传的清洁版新建合同。别自己查状态、别因"起草中"拒绝；args 可留空，字段都在表单里填。',
     args: {
       contractId: '合同 ID',
       stepAssignments: '数组 [{stepIndex, userId}]，覆盖模板所有步骤',

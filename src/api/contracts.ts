@@ -55,6 +55,13 @@ export const contractsApi = {
     if (opts.reuseExistingClean) form.append('reuseExistingClean', 'true')
     return apiFetchForm<{ fields: ContractFields }>(`/api/contracts/${id}/extract-fields`, form)
   },
+  /** 无合同版 AI 提取（"不经审核直接发起"：合同尚未创建时用上传的清洁版直接提取） */
+  extractFieldsNew(opts: { cleanFile: File; contractName?: string }) {
+    const form = new FormData()
+    form.append('cleanFile', opts.cleanFile)
+    if (opts.contractName) form.append('contractName', opts.contractName)
+    return apiFetchForm<{ fields: ContractFields }>('/api/contracts/extract-fields', form)
+  },
   /** v1.4: 保存结构化字段草稿 */
   saveDraft(id: string, data: Partial<ContractFields> & { name?: string; handlerId?: string }) {
     return apiFetch<{ contract: ContractRecord }>(`/api/contracts/${id}/draft`, {

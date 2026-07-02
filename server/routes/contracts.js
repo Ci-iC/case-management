@@ -446,6 +446,35 @@ r.put('/:id', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 's
 
 // ─── v1.4 合同结构化字段 ──────────────────────────────────────────────────────
 
+// POST /api/contracts/extract-fields — 无合同版 AI 提取（用于"不经审核直接发起"：合同尚未创建）
+//   multipart 入参：cleanFile（必填，新上传的清洁版 Word，提取后即删、不入库）
+//                   contractName（可选，用于辅助 AI 判断）
+//   不写库，返回字段给前端填充编辑卡片。
+r.post('/extract-fields', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 'staff'),
+  extractUpload.single('cleanFile'), async (req, res, next) => {
+  const uploadedTmp = req.file?.path || null
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传清洁版（Word）后再提取' })
+    const company = req.user.currentCompanyId
+      ? await db('companies').where({ id: req.user.currentCompanyId }).first()
+      : null
+    const filename = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
+    const fields = await extractContractFields({
+      absPath: req.file.path,
+      mimeType: req.file.mimetype,
+      originalName: filename,
+      contractName: (req.body?.contractName && String(req.body.contractName).trim()) || filename,
+      companyName: company?.name || null,
+    })
+    res.json({ fields })
+  } catch (e) {
+    if (e?.code === 'AI_NOT_CONFIGURED') return res.status(400).json({ error: e.message })
+    next(e)
+  } finally {
+    if (uploadedTmp) await safeUnlink(uploadedTmp)
+  }
+})
+
 // POST /api/contracts/:id/extract-fields — 触发 AI 提取（**以清洁版为准**）
 //   multipart 入参（二选一）：
 //     - cleanFile           新上传的清洁版 Word（提取后即删，不入库）

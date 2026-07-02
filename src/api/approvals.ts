@@ -36,9 +36,11 @@ export const approvalsApi = {
     return apiFetch<ApprovalDetail>(`/api/approvals/${id}`)
   },
 
-  /** v2.1: 发起审批前预览当前公司 active 模板（含每步候选人） */
-  templatePreview(contractId: string) {
-    return apiFetch<TemplatePreview>(`/api/approvals/template-preview?contractId=${encodeURIComponent(contractId)}`)
+  /** v2.1: 发起审批前预览当前公司 active 模板（含每步候选人）
+   *  contractId 可选：不传时按当前公司预览（用于"不经审核直接发起"——合同尚未创建） */
+  templatePreview(contractId?: string) {
+    const q = contractId ? `?contractId=${encodeURIComponent(contractId)}` : ''
+    return apiFetch<TemplatePreview>(`/api/approvals/template-preview${q}`)
   },
 
   /** 经办人发起审批：

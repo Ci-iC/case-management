@@ -316,25 +316,21 @@ r.post('/', requireCompanyRole('manager', 'legal', 'seal_admin', 'finance', 'sta
     if (contract.company_id !== req.user.currentCompanyId) {
       return res.status(403).json({ error: '该合同不属于当前公司' })
     }
+    // 仅"起草中"的合同可发起审批：
+    //   - 新建的、以及审批被驳回后退回"起草中"的合同 → 可发起（含重新发起）
+    //   - "审批中" → 已有进行中的审批，不能重复发起
+    //   - "待签署""已签署" → 审批已结束，不能再发起，也不覆盖其已生成的用印/盖章件
+    // 注意：v2.x 已放开"必须先经法务审核"的前置要求，未经法务审核的起草中合同也可直接发起。
     if (contract.status !== 'drafting') {
-      return res.status(400).json({ error: '该合同当前不是"起草中"状态，不能发起审批' })
+      return res.status(400).json({
+        error: '该合同当前不是"起草中"状态，不能发起审批（审批中或已完成审批的合同不能重复发起；被驳回的合同会退回"起草中"后可重新发起）',
+      })
     }
     if (!canReadContractRow(req.user, contract)) {
       return res.status(403).json({ error: '无权对该合同发起审批' })
     }
 
-    // 必须经过法务（reviewed_storage_path 非空 OR legal_approved=true）
-    const reviewedRow = await db('case_reviews')
-      .where({ contract_id: contractId, is_draft: false })
-      .where(function () {
-        this.whereNotNull('reviewed_storage_path').orWhere('legal_approved', true)
-      })
-      .orderBy('created_at', 'desc')
-      .first()
-    if (!reviewedRow) {
-      return res.status(400).json({ error: '该合同尚未经法务审核（法务上传修订版或点过"无需修订直接通过"），不能发起审批' })
-    }
-
+    // 兜底：起草中合同理论上不应有进行中的审批，仍防御性拦一道，避免并行两条审批
     const activeApproval = await db('approvals')
       .where({ contract_id: contractId, status: 'pending' })
       .first()
@@ -589,13 +585,14 @@ r.get('/template-preview', async (req, res, next) => {
     if (req.user.isAllCompaniesView) {
       return res.status(400).json({ error: '"全部公司"模式不能发起审批，请先切换到具体公司' })
     }
+    // contractId 可选：不传时按当前公司预览模板（用于"不经审核直接发起"——合同尚未创建）
     const { contractId } = req.query || {}
-    if (!contractId) return res.status(400).json({ error: '缺少 contractId 参数' })
-
-    const contract = await db('contracts').where({ id: contractId }).first()
-    if (!contract) return res.status(404).json({ error: '合同不存在' })
-    if (contract.company_id !== req.user.currentCompanyId) {
-      return res.status(403).json({ error: '该合同不属于当前公司' })
+    if (contractId) {
+      const contract = await db('contracts').where({ id: contractId }).first()
+      if (!contract) return res.status(404).json({ error: '合同不存在' })
+      if (contract.company_id !== req.user.currentCompanyId) {
+        return res.status(403).json({ error: '该合同不属于当前公司' })
+      }
     }
 
     const template = await db('approval_templates')
