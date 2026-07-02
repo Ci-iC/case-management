@@ -37,6 +37,7 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [fieldsOpen, setFieldsOpen] = useState(true)
 
   async function load() {
     setLoading(true)
@@ -77,6 +78,27 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
   const isInRejectedToInitiator =
     !!lastReject &&
     (!lastResubmit || new Date(lastReject.createdAt) > new Date(lastResubmit.createdAt))
+
+  // 结构化表单信息（发起审批时填写）——按 ContractFieldsCard 的标签/格式，只展示有值项
+  const termDisplay =
+    contract.termType === '固定日期' ? (contract.termDate || null)
+    : contract.termType === '固定期限' ? (contract.termText || null)
+    : contract.termType === '无期限' ? '无期限'
+    : contract.termType || null
+  const amountDisplay =
+    (contract.paymentType === '收款' || contract.paymentType === '付款' || contract.paymentType === '借贷')
+    && contract.contractAmount != null
+      ? `${contract.contractAmount.toLocaleString('zh-CN')} 元`
+      : null
+  const formRows = [
+    { label: '合同类型', value: contract.contractType || '' },
+    { label: '我方签署主体', value: (contract.ourParties || []).join('、') },
+    { label: '对方签署主体', value: (contract.counterParties || []).join('、') },
+    { label: '收付款类型', value: contract.paymentType || '' },
+    ...(amountDisplay ? [{ label: '合同款项', value: amountDisplay }] : []),
+    { label: '合同期限', value: termDisplay || '' },
+    { label: '经办人', value: contract.handlerDisplayName || contract.handlerUsername || '' },
+  ].filter(r => r.value)
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 max-w-5xl mx-auto w-full">
@@ -160,6 +182,33 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
             currentStepId={approval.currentStepId}
           />
         </div>
+      </section>
+
+      {/* ─── 合同信息（发起时填写的表单，折叠，默认展开） ─────────── */}
+      <section className="rounded-lg border border-slate-200 bg-white">
+        <button
+          onClick={() => setFieldsOpen(!fieldsOpen)}
+          className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50"
+        >
+          <span className="text-sm font-medium text-slate-600">合同信息（发起时填写）</span>
+          {fieldsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+        {fieldsOpen && (
+          <div className="border-t border-slate-100 px-4 py-3">
+            {formRows.length === 0 ? (
+              <p className="text-sm text-slate-400">发起审批时未填写表单信息</p>
+            ) : (
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5">
+                {formRows.map(r => (
+                  <div key={r.label} className="flex gap-2 text-sm">
+                    <dt className="w-24 shrink-0 text-slate-400">{r.label}</dt>
+                    <dd className="min-w-0 break-words text-slate-800">{r.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ─── 历史修订记录（折叠） ──────────────────────────── */}

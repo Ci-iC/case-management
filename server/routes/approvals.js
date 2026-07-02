@@ -719,8 +719,14 @@ r.get('/:id', async (req, res, next) => {
       .where('ac.approval_id', row.id)
       .orderBy('ac.created_at', 'asc')
 
-    // 合同信息（含 summary、reviews 列表，便于审批界面下载）
+    // 合同信息（含 summary、结构化表单字段、reviews 列表，便于审批界面查看/下载）
     const contract = await db('contracts').where({ id: row.contract_id }).first()
+    // 经办人展示名（结构化字段里存的是 handler_id，需回查 users）
+    let handler = null
+    if (contract.handler_id) {
+      handler = await db('users').where({ id: contract.handler_id })
+        .select('username', 'display_name').first()
+    }
     const reviews = await db('case_reviews')
       .select('id', 'uploaded_filename', 'reviewed_filename', 'created_at', 'reviewed_at')
       .where({ contract_id: row.contract_id, is_draft: false })
@@ -741,6 +747,20 @@ r.get('/:id', async (req, res, next) => {
         cleanUploadedAt: toIso(contract.clean_uploaded_at),
         sealedFilename: contract.sealed_filename || null,
         sealedAt: toIso(contract.sealed_at),
+        // v1.4 结构化表单字段（发起审批时填写，供审批人查看）
+        ourParties: contract.our_parties || [],
+        counterParties: contract.counter_parties || [],
+        contractType: contract.contract_type || null,
+        paymentType: contract.payment_type || null,
+        contractAmount: contract.contract_amount != null ? Number(contract.contract_amount) : null,
+        termType: contract.term_type || null,
+        termDate: contract.term_date
+          ? (contract.term_date instanceof Date ? contract.term_date.toISOString().slice(0, 10) : String(contract.term_date).slice(0, 10))
+          : null,
+        termText: contract.term_text || null,
+        handlerId: contract.handler_id || null,
+        handlerUsername: handler?.username || null,
+        handlerDisplayName: handler?.display_name || null,
       },
       reviews: reviews.map(r => ({
         id: r.id,

@@ -407,6 +407,18 @@ export interface ApprovalDetail {
     cleanUploadedAt: string | null
     sealedFilename: string | null
     sealedAt: string | null
+    /** v1.4 结构化表单字段（发起审批时填写） */
+    ourParties?: string[]
+    counterParties?: string[]
+    contractType?: string | null
+    paymentType?: string | null
+    contractAmount?: number | null
+    termType?: string | null
+    termDate?: string | null
+    termText?: string | null
+    handlerId?: string | null
+    handlerUsername?: string | null
+    handlerDisplayName?: string | null
   }
   reviews: Array<{
     id: string
