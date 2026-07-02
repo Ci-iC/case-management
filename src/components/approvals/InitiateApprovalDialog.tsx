@@ -414,16 +414,28 @@ export function InitiateApprovalDialog({ open, onClose, onInitiated, prefillCont
                   <p className="text-sm text-slate-800">上传新清洁版</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">仅支持 Word（.doc / .docx）；上传后自动提取合同信息</p>
                   {cleanMode === 'new' && (
-                    <input
-                      type="file"
-                      accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                      onChange={e => {
-                        const f = e.target.files?.[0] || null
-                        setCleanFile(f)
-                        if (f) runExtractFromClean({ cleanFile: f })   // 上传清洁版 → 自动提取一次
-                      }}
-                      className="mt-2 block text-xs"
-                    />
+                    <>
+                      {/* 已载入清洁版（含 AI 工作台自动抓取的）→ 显示文件名，避免因原生 file 控件显示"未选择文件"而误以为还要再传 */}
+                      {cleanFile && (
+                        <p className="mt-2 flex items-center gap-1 text-[11px] text-emerald-600 truncate">
+                          <CheckCircle2 size={12} className="shrink-0" />
+                          已载入：《{cleanFile.name}》
+                        </p>
+                      )}
+                      <input
+                        type="file"
+                        accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={e => {
+                          const f = e.target.files?.[0] || null
+                          setCleanFile(f)
+                          if (f) runExtractFromClean({ cleanFile: f })   // 上传清洁版 → 自动提取一次
+                        }}
+                        className="mt-1.5 block text-xs"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {cleanFile ? '已有清洁版，如需更换可重新选择文件；否则无需再上传。' : '请选择清洁版 Word 文件。'}
+                      </p>
+                    </>
                   )}
                 </div>
               </label>
