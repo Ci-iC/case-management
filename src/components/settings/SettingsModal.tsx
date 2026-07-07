@@ -45,7 +45,7 @@ export function SettingsModal({ open, onClose }: Props) {
 
   return (
     <Modal open={open} onClose={onClose} title="系统设置">
-      <div className="w-[520px] space-y-5">
+      <div className="w-[520px] max-w-full space-y-5">
         <div>
           <p className="text-sm text-slate-600">
             配置 OpenAI 接口信息，用于「智能录入」功能自动从上传材料中提取案件信息。

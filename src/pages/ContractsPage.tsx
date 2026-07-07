@@ -172,7 +172,7 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
   if (selectedId && (detail || detailLoading)) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-6 shrink-0">
+        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
           <button onClick={() => { setSelectedId(null); setDetail(null) }} className="text-slate-400 hover:text-slate-700">
             <ArrowLeft size={18} />
           </button>
@@ -220,7 +220,7 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 max-w-4xl mx-auto w-full">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-4 max-w-4xl mx-auto w-full">
           {detailLoading && <p className="text-center text-sm text-slate-400 py-6">加载中…</p>}
 
           {/* AI 合同摘要 */}
@@ -340,21 +340,22 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
   // 列表视图
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6 shrink-0">
-        <div className="flex items-center gap-2">
+      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <FolderOpen size={18} className="text-primary-600" />
           <h1 className="text-base font-semibold text-slate-900">合同台账</h1>
-          <span className="text-xs text-slate-400">所有合同 + 历史版本</span>
+          <span className="hidden md:inline text-xs text-slate-400">所有合同 + 历史版本</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
+        {/* 移动端：操作区横向滚动，避免挤爆 h-14 头部 */}
+        <div className="flex items-center gap-2 overflow-x-auto min-w-0 pl-2">
+          <div className="relative shrink-0">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={keyword}
               onChange={e => setKeyword(e.target.value)}
               placeholder="搜索合同名"
-              className="rounded border border-slate-200 pl-7 pr-2.5 py-1 text-xs w-48 focus:outline-none focus:border-primary-400"
+              className="rounded border border-slate-200 pl-7 pr-2.5 py-1 text-xs w-28 sm:w-48 focus:outline-none focus:border-primary-400"
             />
           </div>
           <Button variant="outline" size="sm" icon={<Filter size={12} />} onClick={() => setShowFilters(v => !v)}>
@@ -369,7 +370,7 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
 
       {/* v1.4 高级筛选面板 */}
       {showFilters && (
-        <div className="border-b border-slate-200 bg-slate-50/50 px-6 py-3">
+        <div className="border-b border-slate-200 bg-slate-50/50 px-4 sm:px-6 py-3">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
             <div>
               <label className="block text-slate-500 mb-0.5">合同类型</label>
@@ -477,7 +478,7 @@ export default function ContractsPage({ onJumpToApproval }: ContractsPageProps =
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {loading && contracts.length === 0 && (
           <p className="text-center text-xs text-slate-400 py-6">加载中…</p>
         )}

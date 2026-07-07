@@ -19,9 +19,13 @@ interface SidebarProps {
   onNavChange: (id: string) => void
   messagesOpen?: boolean
   onToggleMessages?: () => void
+  /** 移动端：抽屉是否展开（lg 以上恒常驻，忽略此值） */
+  mobileOpen?: boolean
+  /** 移动端：请求收起抽屉（点遮罩 / 选中菜单后） */
+  onCloseMobile?: () => void
 }
 
-export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages }: SidebarProps) {
+export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages, mobileOpen, onCloseMobile }: SidebarProps) {
   const { user, logout, dismissEmailNotice } = useAuthStore()
   const [pwdOpen, setPwdOpen] = useState(false)
   const [notifEmailOpen, setNotifEmailOpen] = useState(false)
@@ -74,7 +78,20 @@ export function Sidebar({ activeNav, onNavChange, messagesOpen, onToggleMessages
 
   return (
     <>
-      <aside className="flex h-full w-56 flex-col border-r border-slate-200/80 bg-white">
+      {/* 移动端抽屉遮罩（lg 以上侧边栏常驻，无遮罩） */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/30 animate-fade-in lg:hidden"
+          onClick={onCloseMobile}
+        />
+      )}
+      <aside className={cn(
+        'flex h-full w-56 flex-col border-r border-slate-200/80 bg-white',
+        // 移动端：固定定位抽屉，滑入滑出；lg 以上回归文档流常驻
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out',
+        'lg:static lg:z-auto lg:translate-x-0 lg:transition-none',
+        mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full',
+      )}>
         <div className="flex h-14 items-center gap-2 border-b border-slate-100 px-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 shrink-0">
             <Scale size={16} className="text-white" />

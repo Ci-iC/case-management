@@ -42,7 +42,7 @@ export function NotificationEmailModal({ open, onClose }: Props) {
 
   return (
     <Modal open={open} onClose={onClose} title="通知邮箱设置">
-      <div className="w-[420px] space-y-4">
+      <div className="w-[420px] max-w-full space-y-4">
         {flash && (
           <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
             <CheckCircle2 size={14} /> {flash}

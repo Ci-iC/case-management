@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mail, Send, Inbox, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus, Upload, CheckCircle2, CheckSquare } from 'lucide-react'
+import { Mail, Send, Inbox, ArrowLeft, Trash2, Download, FileText, Briefcase, Sparkles, RefreshCw, Plus, Upload, CheckCircle2, CheckSquare } from 'lucide-react'
 import { cn } from '@/utils/helpers'
 import { Button } from '@/components/ui/Button'
 import { ConfirmModal } from '@/components/ui/Modal'
@@ -35,8 +35,9 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
     try {
       const { messages } = await messagesApi.list(folder)
       setList(messages)
-      // 选中第一条
-      if (messages.length > 0 && !selected) {
+      // 选中第一条（仅桌面双栏布局；移动端先停在列表，避免一进来就把首条未读标已读）
+      const isDesktop = window.matchMedia('(min-width: 1024px)').matches
+      if (messages.length > 0 && !selected && isDesktop) {
         await selectMessage(messages[0])
       } else if (messages.length === 0) {
         setSelected(null)
@@ -81,7 +82,7 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6 shrink-0">
+      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
         <div className="flex items-center gap-2">
           <Mail size={18} className="text-primary-600" />
           <h1 className="text-base font-semibold text-slate-900">消息中心</h1>
@@ -97,8 +98,11 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
       </header>
 
       <div className="grid flex-1 grid-cols-12 overflow-hidden">
-        {/* List */}
-        <aside className="col-span-4 flex flex-col border-r border-slate-200 bg-slate-50">
+        {/* List：移动端单栏 —— 选中消息后隐藏列表、只显示详情 */}
+        <aside className={cn(
+          'col-span-12 lg:col-span-4 flex-col border-r border-slate-200 bg-slate-50',
+          selected ? 'hidden lg:flex' : 'flex',
+        )}>
           {/* Folder tabs */}
           <div className="flex border-b border-slate-200 bg-white">
             {(['inbox', 'sent'] as Folder[]).map(f => (
@@ -143,8 +147,19 @@ export default function MessagesPage({ onJumpToApproval }: MessagesPageProps = {
           </div>
         </aside>
 
-        {/* Detail */}
-        <section className="col-span-8 flex flex-col overflow-hidden bg-white">
+        {/* Detail：移动端未选中时隐藏（显示列表） */}
+        <section className={cn(
+          'col-span-12 lg:col-span-8 flex-col overflow-hidden bg-white',
+          selected ? 'flex' : 'hidden lg:flex',
+        )}>
+          {selected && (
+            <button
+              onClick={() => setSelected(null)}
+              className="lg:hidden flex items-center gap-1.5 border-b border-slate-100 px-4 py-2.5 text-xs font-medium text-slate-500 hover:text-slate-800"
+            >
+              <ArrowLeft size={14} />返回列表
+            </button>
+          )}
           {selected ? (
             <MessageDetailView
               message={selected}

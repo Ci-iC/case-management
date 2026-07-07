@@ -267,7 +267,7 @@ export default function WorkbenchPage({ onNavigate }: WorkbenchPageProps = {}) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-50">
       {/* 顶栏 */}
-      <div className="flex items-center gap-2 border-b border-slate-100 bg-white px-6 py-3">
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-white px-4 sm:px-6 py-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600">
           <Bot size={16} className="text-white" />
         </div>

@@ -55,7 +55,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
   if (selectedId) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-6 shrink-0">
+        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
           <button onClick={() => { setSelectedId(null); loadList() }} className="text-slate-400 hover:text-slate-700">
             <ArrowLeft size={18} />
           </button>
@@ -72,7 +72,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6 shrink-0">
+      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
         <div className="flex items-center gap-2">
           <CheckSquare size={18} className="text-primary-600" />
           <h1 className="text-base font-semibold text-slate-900">合同审批</h1>
@@ -106,7 +106,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {error && (
           <p className="rounded bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700 mb-3">{error}</p>
         )}
@@ -135,7 +135,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-mono text-xs text-primary-700">{a.contractCode}</span>
                       <span className={cn(
                         'rounded px-1.5 py-0.5 text-[10px] border',
@@ -160,7 +160,7 @@ export default function ApprovalsPage({ initialApprovalId, onConsumedInitial }: 
                       )}
                     </div>
                     <p className="text-sm font-medium text-slate-800 truncate mb-0.5">{a.contractName}</p>
-                    <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                    <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] text-slate-400">
                       <span>发起：{a.initiatorDisplayName || a.initiatorUsername}</span>
                       {a.currentAssigneeId && (
                         <span>当前：{a.currentAssigneeDisplayName || a.currentAssigneeUsername}</span>

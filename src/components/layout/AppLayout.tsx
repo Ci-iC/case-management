@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Menu } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { CompanySwitcher } from './CompanySwitcher'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -19,6 +20,8 @@ export default function AppLayout() {
   const [activeNav, setActiveNav] = useState<string>('workbench')
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null)
+  // 移动端侧边栏抽屉（lg 以上常驻，此状态无效）
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   function navigateToApproval(approvalId: string) {
     setMessagesOpen(false)
@@ -57,21 +60,37 @@ export default function AppLayout() {
     <div className="flex h-screen w-full overflow-hidden bg-slate-50">
       <Sidebar
         activeNav={messagesOpen ? '' : activeNav}
-        onNavChange={(id) => { setMessagesOpen(false); setActiveNav(id) }}
+        onNavChange={(id) => { setMessagesOpen(false); setActiveNav(id); setSidebarOpen(false) }}
         messagesOpen={messagesOpen}
-        onToggleMessages={() => setMessagesOpen(!messagesOpen)}
+        onToggleMessages={() => { setMessagesOpen(!messagesOpen); setSidebarOpen(false) }}
+        mobileOpen={sidebarOpen}
+        onCloseMobile={() => setSidebarOpen(false)}
       />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {/* v2.0: 顶部公司切换器（普通用户 + 多公司用户才显示出意义） */}
-        <div className="flex items-center justify-between px-6 py-2 border-b border-slate-100 bg-white">
-          <CompanySwitcher />
+      <main className="flex flex-1 flex-col overflow-hidden min-w-0">
+        {/* v2.0: 顶部公司切换器（普通用户 + 多公司用户才显示出意义）；移动端左侧加汉堡按钮 */}
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2 border-b border-slate-100 bg-white">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              title="打开菜单"
+              className="lg:hidden shrink-0 -ml-1 flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+            >
+              <Menu size={20} />
+            </button>
+            <CompanySwitcher />
+          </div>
           {user?.isAllCompaniesView && (
-            <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded">
+            <p className="hidden sm:block text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded">
               当前为"全部公司"汇总视图，仅支持查看；如需操作请切换到具体公司
             </p>
           )}
         </div>
+        {user?.isAllCompaniesView && (
+          <p className="sm:hidden text-[11px] text-amber-700 bg-amber-50 px-3 py-1.5 border-b border-amber-100">
+            "全部公司"汇总视图，仅支持查看
+          </p>
+        )}
         {showPage()}
       </main>
     </div>

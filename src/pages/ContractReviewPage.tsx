@@ -123,11 +123,11 @@ export default function ContractReviewPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6 shrink-0">
+      <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6 shrink-0">
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-primary-600" />
           <h1 className="text-base font-semibold text-slate-900">合同审核</h1>
-          <span className="text-xs text-slate-400">由 AI 给出修改建议</span>
+          <span className="hidden sm:inline text-xs text-slate-400">由 AI 给出修改建议</span>
         </div>
         {!isSuper && (
           <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -151,18 +151,18 @@ export default function ContractReviewPage() {
 
       {/* Mode hint - superadmin 不需要显示（superadmin 自己就是法务） */}
       {!isSuper && (
-        <div className="border-b border-slate-100 bg-amber-50/40 px-6 py-2 text-xs text-amber-800">
+        <div className="border-b border-slate-100 bg-amber-50/40 px-4 sm:px-6 py-2 text-xs text-amber-800">
           {MODE_INFO[mode].desc}
         </div>
       )}
 
-      {/* Body */}
-      <div className="grid flex-1 grid-cols-12 gap-0 overflow-hidden">
+      {/* Body：移动端上下堆叠整页滚动；lg 以上双栏、各自内滚 */}
+      <div className="flex flex-col lg:grid flex-1 lg:grid-cols-12 gap-0 overflow-y-auto lg:overflow-hidden">
 
         {/* Left: upload + current result */}
-        <section className="col-span-7 flex flex-col overflow-hidden border-r border-slate-200">
+        <section className="lg:col-span-7 flex flex-col lg:overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-200">
           {/* Pipeline picker + Upload area */}
-          <div className="border-b border-slate-100 px-6 py-4 space-y-3">
+          <div className="border-b border-slate-100 px-4 sm:px-6 py-4 space-y-3">
             {/* Pipeline picker */}
             <div className="flex items-center gap-2">
               <Workflow size={14} className="text-slate-400 shrink-0" />
@@ -201,7 +201,7 @@ export default function ContractReviewPage() {
           </div>
 
           {/* Latest result */}
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="flex-1 lg:overflow-y-auto px-4 sm:px-6 py-5">
             {latest ? (
               <ReviewBlock
                 review={latest}
@@ -222,14 +222,14 @@ export default function ContractReviewPage() {
         </section>
 
         {/* Right: history */}
-        <aside className="col-span-5 flex flex-col overflow-hidden bg-slate-50">
+        <aside className="lg:col-span-5 flex flex-col lg:overflow-hidden bg-slate-50">
           <div className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4 shrink-0">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">历史审核</p>
             <button onClick={loadHistory} className="text-xs text-primary-600 hover:underline">
               刷新
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          <div className="flex-1 lg:overflow-y-auto px-3 py-3 space-y-2">
             {historyLoading && history.length === 0 && (
               <p className="text-center text-xs text-slate-400 py-6">加载中…</p>
             )}

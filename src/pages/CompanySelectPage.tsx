@@ -34,7 +34,7 @@ export function CompanySelectPage() {
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
-      <div className="w-[520px] rounded-xl bg-white p-8 shadow-modal">
+      <div className="w-full max-w-[520px] rounded-xl bg-white p-6 sm:p-8 shadow-modal">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary-600">
             <Scale size={20} className="text-white" />

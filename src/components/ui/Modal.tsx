@@ -24,9 +24,9 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30 animate-fade-in" onClick={onClose} />
-      <div className="relative z-10 w-auto max-w-[95vw] rounded-xl bg-white shadow-modal animate-fade-in">
+      <div className="relative z-10 flex w-auto max-w-[95vw] max-h-[90dvh] flex-col rounded-xl bg-white shadow-modal animate-fade-in">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 sm:px-6 py-3.5 sm:py-4">
           <h3 className="text-base font-semibold text-slate-900">{title}</h3>
           <button
             onClick={onClose}
@@ -35,8 +35,8 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
             <X size={16} />
           </button>
         </div>
-        {/* Body */}
-        <div className="px-6 py-5">{children}</div>
+        {/* Body：移动端弹窗常超屏高，自身滚动 */}
+        <div className="px-4 sm:px-6 py-4 sm:py-5 overflow-y-auto">{children}</div>
       </div>
     </div>
   )

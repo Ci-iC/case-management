@@ -13,7 +13,7 @@ interface Props {
 export function ChangePasswordModal({ open, onClose }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="修改密码">
-      <div className="w-[420px]">
+      <div className="w-[420px] max-w-full">
         <ChangePasswordForm
           mode="voluntary"
           onCancel={onClose}
