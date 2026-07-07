@@ -61,7 +61,7 @@ async function loadUserCompanies(userId) {
 //          c) 多家公司 → token 不带 cc，前端进入"选公司"页，选完调 switch-company 重签
 r.post('/login', loginLimiter, async (req, res, next) => {
   try {
-    const { username, password } = req.body || {}
+    const { username, password, rememberMe } = req.body || {}
     if (!username || !password) return res.status(400).json({ error: '请输入账号和密码' })
 
     const row = await db('users')
@@ -115,8 +115,8 @@ r.post('/login', loginLimiter, async (req, res, next) => {
       emailNotifyEnabled: row.email_notify_enabled !== false,
       emailFeatureNoticeSeen: !!row.email_feature_notice_seen,
     }
-    const token = signToken({ id: row.id, username: row.username, role: row.role }, newTokenVersion, currentCompanyId)
-    await writeAudit({ actorId: userPayload.id, action: 'auth.login', targetType: 'user', targetId: userPayload.id })
+    const token = signToken({ id: row.id, username: row.username, role: row.role }, newTokenVersion, currentCompanyId, { remember: !!rememberMe })
+    await writeAudit({ actorId: userPayload.id, action: 'auth.login', targetType: 'user', targetId: userPayload.id, payload: rememberMe ? { rememberMe: true } : undefined })
     res.json({ token, user: userPayload })
   } catch (e) { next(e) }
 })
@@ -215,7 +215,7 @@ r.post('/switch-company', requireAuth, async (req, res, next) => {
       // 超管不应该切公司（超管不归属公司）；但为了让超管能"以只读视角观察某公司"，允许带 cc
       const co = await db('companies').where({ id: companyId, status: 'active' }).first()
       if (!co) return res.status(404).json({ error: '公司不存在或已停用' })
-      const token = signToken({ id: req.user.id, username: req.user.username, role: req.user.role }, await getCurrentTV(req.user.id), companyId)
+      const token = signToken({ id: req.user.id, username: req.user.username, role: req.user.role }, await getCurrentTV(req.user.id), companyId, { remember: req.tokenRemember })
       return res.json({ token })
     }
 
@@ -231,7 +231,7 @@ r.post('/switch-company', requireAuth, async (req, res, next) => {
       if (!managerCompanies || Number(managerCompanies.n) < 2) {
         return res.status(403).json({ error: '仅在 2 家及以上公司担任企业管理人员的用户可进入"全部公司"视图' })
       }
-      const token = signToken({ id: req.user.id, username: req.user.username, role: req.user.role }, await getCurrentTV(req.user.id), 'ALL')
+      const token = signToken({ id: req.user.id, username: req.user.username, role: req.user.role }, await getCurrentTV(req.user.id), 'ALL', { remember: req.tokenRemember })
       return res.json({ token })
     }
 
@@ -247,6 +247,7 @@ r.post('/switch-company', requireAuth, async (req, res, next) => {
       { id: req.user.id, username: req.user.username, role: req.user.role },
       await getCurrentTV(req.user.id),
       companyId,
+      { remember: req.tokenRemember },
     )
     res.json({ token })
   } catch (e) { next(e) }
@@ -308,6 +309,7 @@ r.post('/change-password', requireAuth, async (req, res, next) => {
       { id: req.user.id, username: row.username, role: row.role },
       newTokenVersion,
       req.user.isAllCompaniesView ? 'ALL' : req.user.currentCompanyId,
+      { remember: req.tokenRemember },
     )
     res.json({ ok: true, token, user: userPayload })
   } catch (e) { next(e) }

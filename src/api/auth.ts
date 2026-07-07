@@ -69,10 +69,10 @@ export const COMPANY_ROLE_LABEL: Record<CompanyRole, string> = {
 }
 
 export const authApi = {
-  login(username: string, password: string) {
+  login(username: string, password: string, rememberMe = false) {
     return apiFetch<{ token: string; user: AuthUser }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, rememberMe }),
     })
   },
 

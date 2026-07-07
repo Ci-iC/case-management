@@ -7,6 +7,8 @@ if (!JWT_SECRET || JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET === 'chan
   throw new Error('JWT_SECRET is required (set a long random value in .env, do not use the placeholder)')
 }
 const TOKEN_TTL = '1d'
+// "记住我"长效 token（可用 env 覆盖，如 '7d' / '90d'）
+const REMEMBER_TOKEN_TTL = process.env.REMEMBER_TOKEN_TTL || '30d'
 
 // v2.0: 平台层 vs 公司层
 // 平台层角色（users.role）：
@@ -28,12 +30,15 @@ export function isSuperAdmin(user) {
 /** 签 token。payload:
  *    sub: user.id, role: users.role (superadmin / platform_user),
  *    tv: token_version, cc: current_company_id (可选)
+ *    rm: true 表示"记住我"长效会话（重签 token 的接口据此延续 30 天有效期）
  *  cc 为 null/undefined 时表示：
  *    - superadmin（不归属公司）
  *    - 多公司用户登录后还没选公司
  *    - manager 多公司用户切到"全部公司"视图（cc='ALL'）
+ *  opts.remember=true → TTL 30 天 + payload 带 rm，否则维持 1 天
  */
-export function signToken(user, tokenVersion, currentCompanyId) {
+export function signToken(user, tokenVersion, currentCompanyId, opts = {}) {
+  const remember = !!opts.remember
   return jwt.sign(
     {
       sub: user.id,
@@ -41,9 +46,10 @@ export function signToken(user, tokenVersion, currentCompanyId) {
       role: user.role,
       tv: tokenVersion,
       cc: currentCompanyId ?? null,
+      ...(remember ? { rm: true } : {}),
     },
     JWT_SECRET,
-    { expiresIn: TOKEN_TTL },
+    { expiresIn: remember ? REMEMBER_TOKEN_TTL : TOKEN_TTL },
   )
 }
 
@@ -81,6 +87,8 @@ export async function requireAuth(req, res, next) {
     if (!m) return res.status(401).json({ error: '未登录' })
     const payload = verifyToken(m[1])
     if (!payload) return res.status(401).json({ error: '登录已过期，请重新登录' })
+    // "记住我"会话标记：switch-company / change-password 重签 token 时据此延续长效 TTL
+    req.tokenRemember = payload.rm === true
 
     const user = await db('users')
       .select('id', 'username', 'role', 'display_name', 'token_version', 'must_change_password', 'created_at',
