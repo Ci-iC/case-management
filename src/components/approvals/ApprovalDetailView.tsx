@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Download, FileText, ChevronDown, ChevronUp, Sparkles, Check, X, UserPlus, Upload, Send, RefreshCcw } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Download, FileText, ChevronDown, ChevronUp, Sparkles, Check, X, UserPlus, Upload, Send, RefreshCcw, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { approvalsApi, downloadSealedContract, downloadCleanContract, downloadWatermarkPdf } from '@/api/approvals'
+import { PdfPreview } from '@/components/ui/PdfPreview'
+import { approvalsApi, downloadSealedContract, downloadCleanContract, downloadWatermarkPdf, fetchPreviewPdfUrl } from '@/api/approvals'
 import { reviewsApi } from '@/api/reviews'
 import { messagesApi } from '@/api/messages'
 import { ApiError } from '@/api/client'
@@ -38,6 +39,10 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [fieldsOpen, setFieldsOpen] = useState(true)
+  const [previewOpen, setPreviewOpen] = useState(false)
+
+  // 预览加载函数：稳定引用，供 PdfPreview 的 effect 依赖（随 approvalId 变化而变）
+  const loadPreviewUrl = useCallback(() => fetchPreviewPdfUrl(approvalId), [approvalId])
 
   async function load() {
     setLoading(true)
@@ -101,7 +106,7 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
   ].filter(r => r.value)
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 max-w-5xl mx-auto w-full">
+    <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 max-w-5xl mx-auto w-full">
       {/* ─── 顶部：合同信息 + 进度条 ─────────────────────────── */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex items-start gap-3 mb-4">
@@ -143,16 +148,32 @@ export function ApprovalDetailView({ approvalId, onActionDone }: Props) {
         <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">合同文件</p>
         <div className="space-y-2">
           {contract.cleanFilename ? (
-            <button
-              onClick={() => downloadCleanContract(contract.id, contract.cleanFilename!)}
-              className="w-full flex items-center gap-3 rounded-lg bg-primary-50 border-2 border-primary-200 px-4 py-3 hover:bg-primary-100 text-left"
-            >
-              <Download size={18} className="text-primary-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{contract.cleanFilename}</p>
-                <p className="text-[11px] text-primary-600">清洁版 · 待审批文件</p>
+            <div className="rounded-lg bg-primary-50 border-2 border-primary-200 overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <FileText size={18} className="text-primary-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 truncate">{contract.cleanFilename}</p>
+                  <p className="text-[11px] text-primary-600">清洁版 · 待审批文件</p>
+                </div>
+                <button
+                  onClick={() => setPreviewOpen(o => !o)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
+                >
+                  <Eye size={14} />{previewOpen ? '收起预览' : '预览'}
+                </button>
+                <button
+                  onClick={() => downloadCleanContract(contract.id, contract.cleanFilename!)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100"
+                >
+                  <Download size={14} />下载
+                </button>
               </div>
-            </button>
+              {previewOpen && (
+                <div className="border-t border-primary-200 bg-white p-2">
+                  <PdfPreview loadUrl={loadPreviewUrl} reloadKey={approvalId} />
+                </div>
+              )}
+            </div>
           ) : (
             <p className="text-xs text-slate-400 italic">尚未上传清洁版</p>
           )}

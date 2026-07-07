@@ -1,4 +1,4 @@
-import { apiFetch, apiFetchForm, downloadFile } from './client'
+import { apiFetch, apiFetchForm, downloadFile, getAuthHeader, ApiError } from './client'
 import type { ApprovalRecord, ApprovalDetail } from '@/types'
 import type { TemplateStepRole } from './companies'
 
@@ -127,4 +127,23 @@ export function downloadWatermarkPdf(approvalId: string, filename: string) {
 /** v1.3.1: 清洁版下载（审批界面 / 合同台账详情主显示） */
 export function downloadCleanContract(contractId: string, filename: string) {
   return downloadFile(`/api/contracts/${contractId}/clean-file`, filename)
+}
+
+/** 网页内预览：拉取清洁版合同的 PDF（Word 会由服务端转 PDF），返回 blob URL 供 pdfjs 渲染。
+ *  调用方负责在不用时 URL.revokeObjectURL 释放。 */
+export async function fetchPreviewPdfUrl(approvalId: string): Promise<string> {
+  const resp = await fetch(`/api/approvals/${approvalId}/preview-pdf`, { headers: getAuthHeader() })
+  if (!resp.ok) {
+    let msg = `预览加载失败 (${resp.status})`
+    try {
+      const ct = resp.headers.get('content-type') || ''
+      if (ct.includes('application/json')) {
+        const body = await resp.json() as { error?: string }
+        if (body?.error) msg = body.error
+      }
+    } catch { /* ignore */ }
+    throw new ApiError(msg, resp.status)
+  }
+  const blob = await resp.blob()
+  return URL.createObjectURL(blob)
 }

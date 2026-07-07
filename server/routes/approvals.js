@@ -1460,6 +1460,93 @@ r.get('/:id/export-watermark-pdf', async (req, res, next) => {
   }
 })
 
+// ─── 网页内预览：清洁版合同 → PDF（inline） ─────────────────────────────────
+//
+// GET /api/approvals/:id/preview-pdf
+//   - 权限：与 GET /:id 一致（manager/legal 可看全部、发起人、流程参与者）
+//   - 清洁版本身是 PDF → 直接 inline 返回；是 Word → LibreOffice 转 PDF（带磁盘缓存）
+//   - 与「导出用印水印版」不同：这里不加水印、Content-Disposition 用 inline，供 pdfjs 在前端逐页渲染
+//   - 缓存：转换结果写在 <清洁版路径>.preview.pdf，源文件更新（mtime 变新）后自动重转
+
+async function cleanContractToPreviewPdf(cleanAbs) {
+  if (path.extname(cleanAbs).toLowerCase() === '.pdf') {
+    return await fs.readFile(cleanAbs)
+  }
+  // Word：先看缓存是否有效（缓存文件比源文件新）
+  const cacheAbs = cleanAbs + '.preview.pdf'
+  try {
+    const [srcStat, cacheStat] = await Promise.all([fs.stat(cleanAbs), fs.stat(cacheAbs)])
+    if (cacheStat.mtimeMs >= srcStat.mtimeMs) return await fs.readFile(cacheAbs)
+  } catch { /* 无缓存或已过期 → 重新转换 */ }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'preview-'))
+  try {
+    const sofficeBin = resolveLibreOfficePath()
+    const profileUrl = pathToFileURL(path.join(tmpDir, 'lo-profile')).href
+    try {
+      await execFileP(sofficeBin, [
+        '-env:UserInstallation=' + profileUrl,
+        '--headless', '--convert-to', 'pdf', '--outdir', tmpDir, cleanAbs,
+      ], { timeout: 90_000 })
+    } catch (e) {
+      throw Object.assign(new Error(
+        'Word → PDF 转换失败：' + (e?.code === 'ENOENT'
+          ? '未找到 LibreOffice，请在服务器安装或设置 LIBREOFFICE_PATH 环境变量'
+          : (e?.message || '未知错误'))
+      ), { status: 500 })
+    }
+    const pdfPath = path.join(tmpDir, `${path.parse(cleanAbs).name}.pdf`)
+    let pdfBytes
+    try { pdfBytes = await fs.readFile(pdfPath) }
+    catch { throw Object.assign(new Error('LibreOffice 转换完成但找不到输出 PDF 文件'), { status: 500 }) }
+    // 写缓存（失败不影响返回）
+    await fs.writeFile(cacheAbs, pdfBytes).catch(() => {})
+    return pdfBytes
+  } finally {
+    fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+r.get('/:id/preview-pdf', async (req, res, next) => {
+  try {
+    const approval = await db('approvals').where({ id: req.params.id }).first()
+    if (!approval) return res.status(404).json({ error: '审批不存在' })
+    if (approval.company_id !== req.user.currentCompanyId) {
+      return res.status(403).json({ error: '该审批不属于当前公司' })
+    }
+    // 权限与 GET /:id 一致：manager/legal 看全部、发起人、流程参与者
+    const canSeeAll = hasCompanyRole(req, 'manager') || hasCompanyRole(req, 'legal')
+    const isInitiator = approval.initiator_id === req.user.id
+    const involved = await db('approval_steps').where({ approval_id: approval.id, assignee_id: req.user.id }).first()
+    if (!canSeeAll && !isInitiator && !involved) {
+      return res.status(403).json({ error: '无权查看该审批' })
+    }
+
+    const contract = await db('contracts').where({ id: approval.contract_id }).first()
+    if (!contract) return res.status(404).json({ error: '合同不存在' })
+    if (!contract.clean_storage_path) {
+      return res.status(400).json({ error: '该合同尚未上传清洁版文件' })
+    }
+    const cleanAbs = toAbsolutePath(contract.clean_storage_path)
+    try { await fs.access(cleanAbs) } catch {
+      return res.status(404).json({ error: '清洁版文件已丢失，请联系经办人重新上传' })
+    }
+
+    const pdfBytes = await cleanContractToPreviewPdf(cleanAbs)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', 'inline')
+    res.setHeader('Cache-Control', 'private, max-age=60')
+    res.send(Buffer.from(pdfBytes))
+  } catch (e) {
+    if (!res.headersSent) {
+      if (e?.status) return res.status(e.status).json({ error: e.message })
+      next(e)
+    } else {
+      console.error('[preview-pdf] error after headers sent:', e?.message || e)
+    }
+  }
+})
+
 // ─── 工具：加载操作上下文（v2.0: 校验 approval 存在 + 公司归属 + 当前步骤 + assignee）─
 async function loadActionContext(approvalId, userId, currentCompanyId) {
   const approval = await db('approvals').where({ id: approvalId }).first()
